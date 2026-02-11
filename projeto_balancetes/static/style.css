@@ -1,0 +1,595 @@
+/* Reset & Base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, sans-serif;
+    background: #f5f7fa;
+    color: #1a1a2e;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 20px;
+}
+
+/* Header */
+header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+header h1 {
+    font-size: 1.8em;
+    font-weight: 700;
+    color: #1a1a2e;
+}
+
+.subtitle {
+    color: #6c757d;
+    font-size: 0.95em;
+    margin-top: 4px;
+}
+
+/* Sections */
+h2 {
+    font-size: 1.1em;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: #333;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Drop Zone */
+.drop-zone {
+    border: 2px dashed #c0c8d4;
+    border-radius: 12px;
+    padding: 48px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    background: #fff;
+}
+
+.drop-zone:hover,
+.drop-zone.active {
+    border-color: #4a7dff;
+    background: #f0f4ff;
+}
+
+.drop-icon {
+    font-size: 2.5em;
+    margin-bottom: 12px;
+}
+
+.drop-zone p {
+    color: #555;
+    font-size: 1em;
+}
+
+.drop-hint {
+    font-size: 0.85em !important;
+    color: #999 !important;
+    margin-top: 4px;
+}
+
+/* File List */
+#file-list-section {
+    margin-top: 24px;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #e5e8ec;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    transition: background 0.15s;
+}
+
+.file-item:hover {
+    background: #f8f9fb;
+}
+
+.file-icon {
+    font-size: 1.3em;
+    flex-shrink: 0;
+}
+
+.file-name {
+    flex: 1;
+    font-size: 0.9em;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-meta {
+    font-size: 0.8em;
+    color: #888;
+    flex-shrink: 0;
+}
+
+.file-remove {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1em;
+    color: #ccc;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.file-remove:hover {
+    color: #e53935;
+    background: #ffebee;
+}
+
+/* Controls */
+.controls {
+    margin-top: 20px;
+    padding: 16px;
+    background: #fff;
+    border: 1px solid #e5e8ec;
+    border-radius: 8px;
+}
+
+.control-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.control-row label {
+    font-size: 0.9em;
+    font-weight: 500;
+    color: #555;
+    min-width: 65px;
+}
+
+.control-row input[type="range"] {
+    flex: 1;
+    accent-color: #4a7dff;
+}
+
+#workers-value {
+    font-weight: 600;
+    font-size: 1.1em;
+    color: #4a7dff;
+    min-width: 24px;
+    text-align: center;
+}
+
+.info-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 12px;
+    font-size: 0.85em;
+    color: #888;
+}
+
+/* Buttons */
+.btn-primary {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    margin-top: 16px;
+    background: #4a7dff;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1em;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-primary:hover {
+    background: #3a6ae8;
+}
+
+.btn-primary:disabled {
+    background: #b0c4ff;
+    cursor: not-allowed;
+}
+
+.btn-secondary {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin-top: 8px;
+    background: #fff;
+    color: #555;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 0.9em;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+    background: #f5f5f5;
+    border-color: #bbb;
+}
+
+/* ===== Progress Section ===== */
+#progress-section {
+    margin-top: 24px;
+}
+
+/* Header com timer */
+.progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.progress-header h2 {
+    margin-bottom: 0;
+}
+
+.elapsed-timer {
+    font-size: 0.9em;
+    font-weight: 600;
+    color: #4a7dff;
+    font-variant-numeric: tabular-nums;
+    background: #f0f4ff;
+    padding: 4px 12px;
+    border-radius: 6px;
+}
+
+/* Barra de progresso */
+.progress-bar-container {
+    width: 100%;
+    height: 12px;
+    background: #e5e8ec;
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #4a7dff, #6c9fff);
+    border-radius: 6px;
+    width: 0%;
+    transition: width 0.5s ease;
+    position: relative;
+}
+
+.progress-bar.active::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(
+        90deg,
+        transparent 0%,
+        rgba(255,255,255,0.3) 50%,
+        transparent 100%
+    );
+    animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(100%); }
+}
+
+.progress-bar.done {
+    background: linear-gradient(90deg, #43a047, #66bb6a);
+}
+
+/* Texto de progresso */
+.progress-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 8px;
+    font-size: 0.85em;
+    color: #666;
+}
+
+.progress-pct {
+    font-weight: 600;
+    font-size: 1em;
+    color: #333;
+}
+
+/* Lista de arquivos com estágios */
+#progress-details {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.progress-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    font-size: 0.85em;
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+}
+
+/* Status: Na fila */
+.progress-item.queued {
+    color: #aaa;
+    background: #fafafa;
+}
+
+/* Status: Processando */
+.progress-item.processing {
+    color: #1565c0;
+    background: #e8f0fe;
+    border-color: #c5d9f7;
+}
+
+/* Status: Concluído */
+.progress-item.done {
+    color: #2e7d32;
+    background: #e8f5e9;
+    border-color: #c8e6c9;
+}
+
+/* Status: Erro */
+.progress-item.error {
+    color: #c62828;
+    background: #ffebee;
+    border-color: #ffcdd2;
+}
+
+.progress-item .status-icon {
+    flex-shrink: 0;
+    width: 20px;
+    text-align: center;
+    font-size: 0.9em;
+}
+
+.progress-item .filename {
+    font-weight: 500;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.progress-item .pages-badge {
+    font-size: 0.75em;
+    color: #999;
+    background: #f0f0f0;
+    padding: 1px 6px;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.progress-item.processing .pages-badge {
+    color: #1565c0;
+    background: #d4e4fc;
+}
+
+.progress-item .stage-info {
+    flex: 1;
+    text-align: right;
+    font-size: 0.8em;
+    color: #888;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.progress-item.processing .stage-info {
+    color: #1976d2;
+}
+
+.progress-item .done-info {
+    flex-shrink: 0;
+    font-size: 0.8em;
+    color: #66bb6a;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.progress-item .error-info {
+    flex: 1;
+    text-align: right;
+    font-size: 0.8em;
+    color: #e53935;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Spinner animado */
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #4a7dff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+}
+
+/* Pulsar para itens na fila */
+@keyframes pulse-dot {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+}
+
+.pulse-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    background: #ccc;
+    border-radius: 50%;
+    animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Checkmark animado */
+@keyframes pop-in {
+    0% { transform: scale(0); opacity: 0; }
+    50% { transform: scale(1.3); }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.check-icon {
+    display: inline-block;
+    animation: pop-in 0.3s ease-out;
+    color: #43a047;
+    font-weight: bold;
+}
+
+/* Stage badges */
+.stage-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.75em;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+}
+
+.stage-badge.analyzing {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.stage-badge.classifying {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.stage-badge.extracting {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+
+.stage-badge.exporting {
+    background: #e0f2f1;
+    color: #00695c;
+}
+
+/* ===== Results ===== */
+#results-section {
+    margin-top: 24px;
+}
+
+#results-summary {
+    padding: 14px 16px;
+    background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+    border: 1px solid #c8e6c9;
+    border-radius: 8px;
+    font-size: 0.9em;
+    color: #2e7d32;
+    margin-bottom: 12px;
+    text-align: center;
+    display: flex;
+    justify-content: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.result-stat {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.result-stat .label {
+    color: #558b2f;
+    font-size: 0.85em;
+}
+
+.result-stat .value {
+    font-weight: 600;
+}
+
+.result-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: #fff;
+    border: 1px solid #e5e8ec;
+    border-radius: 8px;
+    margin-bottom: 6px;
+}
+
+.result-item .file-icon {
+    color: #4caf50;
+}
+
+.result-item .file-name {
+    flex: 1;
+    font-size: 0.9em;
+}
+
+.result-item .file-meta {
+    font-size: 0.8em;
+    color: #888;
+}
+
+.btn-download {
+    background: none;
+    border: 1px solid #ddd;
+    padding: 4px 12px;
+    border-radius: 6px;
+    font-size: 0.8em;
+    cursor: pointer;
+    color: #4a7dff;
+    font-weight: 500;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+
+.btn-download:hover {
+    background: #f0f4ff;
+    border-color: #4a7dff;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+    .container {
+        padding: 20px 12px;
+    }
+
+    header h1 {
+        font-size: 1.4em;
+    }
+
+    .drop-zone {
+        padding: 32px 16px;
+    }
+
+    .progress-item .stage-info {
+        display: none;
+    }
+}

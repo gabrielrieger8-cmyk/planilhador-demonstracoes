@@ -1,0 +1,25 @@
+# Ambiente
+.env
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Dados
+data/input/*.pdf
+data/output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Distribuição
+dist/
+build/
+*.egg-info/

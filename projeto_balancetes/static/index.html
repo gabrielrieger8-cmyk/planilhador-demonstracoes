@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversor de Balancetes</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Conversor de Balancetes</h1>
+            <p class="subtitle">PDF &rarr; CSV via Gemini 3 Flash</p>
+        </header>
+
+        <!-- Upload Area -->
+        <div id="upload-section">
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-icon">📄</div>
+                <p>Arraste PDFs aqui</p>
+                <p class="drop-hint">ou clique para selecionar</p>
+                <input type="file" id="file-input" multiple accept=".pdf" hidden>
+            </div>
+        </div>
+
+        <!-- File List -->
+        <div id="file-list-section" class="hidden">
+            <h2>Arquivos</h2>
+            <div id="file-list"></div>
+
+            <div class="controls">
+                <div class="control-row">
+                    <label for="workers-slider">Workers:</label>
+                    <input type="range" id="workers-slider" min="1" max="3" value="2">
+                    <span id="workers-value">2</span>
+                </div>
+                <div class="info-row">
+                    <span id="total-info"></span>
+                    <span id="cost-estimate"></span>
+                </div>
+            </div>
+
+            <button id="convert-btn" class="btn-primary" onclick="startConversion()">
+                Converter
+            </button>
+        </div>
+
+        <!-- Progress -->
+        <div id="progress-section" class="hidden">
+            <div class="progress-header">
+                <h2>Progresso</h2>
+                <span id="elapsed-timer" class="elapsed-timer">0:00</span>
+            </div>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar active"></div>
+            </div>
+            <div class="progress-stats">
+                <span id="progress-pct" class="progress-pct">0%</span>
+                <span id="progress-text"></span>
+            </div>
+            <div id="progress-details"></div>
+        </div>
+
+        <!-- Results -->
+        <div id="results-section" class="hidden">
+            <h2>Resultados</h2>
+            <div id="results-summary"></div>
+            <div id="results-list"></div>
+            <button id="download-all-btn" class="btn-primary" onclick="downloadAll()">
+                Baixar Todos (ZIP)
+            </button>
+            <button class="btn-secondary" onclick="resetApp()">
+                Nova Conversao
+            </button>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

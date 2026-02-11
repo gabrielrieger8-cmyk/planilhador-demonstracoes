@@ -1,0 +1,5 @@
+docling
+google-genai
+pymupdf
+python-dotenv
+pytest
