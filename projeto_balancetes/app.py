@@ -23,9 +23,8 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.agents.classifier import ProcessingRoute
 from src.orchestrator import Orchestrator, OutputFormat
-from src.utils.config import logger
+from src.utils.config import MODELOS_DISPONIVEIS, config, logger
 
 # ---------------------------------------------------------------------------
 # App
@@ -75,6 +74,7 @@ class Job:
     total: int = 0
     error: str | None = None
     started_at: float = 0.0  # timestamp do inicio
+    preview_data: dict[str, list[list[str]]] = field(default_factory=dict)
 
 
 jobs: dict[str, Job] = {}
@@ -169,7 +169,7 @@ async def convert(job_id: str, workers: int = 3):
     if job.status == "converting":
         raise HTTPException(409, "Conversao ja em andamento.")
 
-    workers = max(1, min(3, workers))
+    workers = max(1, min(36, workers))
 
     job.status = "converting"
     job.completed = 0
@@ -245,33 +245,37 @@ async def progress_sse(job_id: str):
 
 @app.get("/results/{job_id}")
 async def results(job_id: str):
-    """Lista CSVs gerados."""
+    """Lista CSVs e XLSXs gerados."""
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job nao encontrado.")
 
-    csv_files = []
+    output_files = []
     if job.output_dir and job.output_dir.exists():
-        for f in sorted(job.output_dir.glob("*.csv")):
-            csv_files.append({
-                "name": f.name,
-                "size": f.stat().st_size,
-            })
+        for f in sorted(job.output_dir.iterdir()):
+            if f.suffix.lower() in (".csv", ".xlsx"):
+                ext = f.suffix.lower().lstrip(".")
+                output_files.append({
+                    "name": f.name,
+                    "size": f.stat().st_size,
+                    "type": ext,
+                })
 
     total_cost = sum(p.cost for p in job.progress)
     total_time = sum(p.time for p in job.progress)
 
     return {
         "status": job.status,
-        "files": csv_files,
+        "files": output_files,
         "total_cost": round(total_cost, 6),
         "total_time": round(total_time, 2),
+        "preview_data": job.preview_data,
     }
 
 
 @app.get("/download/{job_id}/{filename}")
 async def download(job_id: str, filename: str):
-    """Baixa um CSV individual."""
+    """Baixa um CSV ou XLSX individual."""
     job = jobs.get(job_id)
     if not job or not job.output_dir:
         raise HTTPException(404, "Job nao encontrado.")
@@ -280,28 +284,37 @@ async def download(job_id: str, filename: str):
     if not file_path.exists():
         raise HTTPException(404, "Arquivo nao encontrado.")
 
+    media_types = {
+        ".csv": "text/csv",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    media_type = media_types.get(file_path.suffix.lower(), "application/octet-stream")
+
     return FileResponse(
         str(file_path),
-        media_type="text/csv",
+        media_type=media_type,
         filename=filename,
     )
 
 
 @app.get("/download-all/{job_id}")
 async def download_all(job_id: str):
-    """Baixa todos os CSVs como ZIP."""
+    """Baixa todos os CSVs e XLSXs como ZIP."""
     job = jobs.get(job_id)
     if not job or not job.output_dir:
         raise HTTPException(404, "Job nao encontrado.")
 
-    csvs = list(job.output_dir.glob("*.csv"))
-    if not csvs:
-        raise HTTPException(404, "Nenhum CSV gerado.")
+    output_files = [
+        f for f in job.output_dir.iterdir()
+        if f.suffix.lower() in (".csv", ".xlsx")
+    ]
+    if not output_files:
+        raise HTTPException(404, "Nenhum arquivo gerado.")
 
     zip_path = job.output_dir.parent / f"balancetes_{job_id}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for csv_file in csvs:
-            zf.write(csv_file, csv_file.name)
+        for out_file in output_files:
+            zf.write(out_file, out_file.name)
 
     return FileResponse(
         str(zip_path),
@@ -333,6 +346,33 @@ async def remove_file(job_id: str, filename: str):
             }
 
     raise HTTPException(404, "Arquivo nao encontrado no job.")
+
+
+# ---------------------------------------------------------------------------
+# Modelo
+# ---------------------------------------------------------------------------
+
+@app.get("/models")
+async def get_models():
+    """Retorna modelos disponíveis e qual está ativo."""
+    return {
+        "active": config.gemini_model,
+        "models": {
+            model_id: info["label"]
+            for model_id, info in MODELOS_DISPONIVEIS.items()
+        },
+    }
+
+
+@app.post("/set-model")
+async def set_model(body: dict):
+    """Altera o modelo Gemini ativo."""
+    model_id = body.get("model", "")
+    if model_id not in MODELOS_DISPONIVEIS:
+        raise HTTPException(400, f"Modelo inválido: {model_id}")
+    config.gemini_model = model_id
+    logger.info("Modelo alterado para: %s", model_id)
+    return {"active": model_id}
 
 
 # ---------------------------------------------------------------------------
@@ -368,7 +408,6 @@ def _run_conversion(job: Job, max_workers: int) -> None:
             result = orch.process(
                 file_path,
                 output_format=OutputFormat.CSV,
-                force_route=ProcessingRoute.GEMINI,
                 output_dir=job.output_dir,
             )
             elapsed = time.time() - start
@@ -376,9 +415,13 @@ def _run_conversion(job: Job, max_workers: int) -> None:
             if result.success:
                 return idx, {
                     "status": "done",
-                    "output_files": [Path(f).name for f in result.output_files if f.endswith(".csv")],
+                    "output_files": [
+                        Path(f).name for f in result.output_files
+                        if f.endswith((".csv", ".xlsx"))
+                    ],
                     "cost": result.estimated_cost,
                     "time": elapsed,
+                    "preview_rows": result.details.get("preview_rows", []),
                 }
             else:
                 return idx, {
@@ -425,6 +468,12 @@ def _run_conversion(job: Job, max_workers: int) -> None:
                 p.stage_detail = ""
                 job.completed += 1
 
+                # Guarda preview data indexado pelo nome base do PDF
+                preview_rows = info.get("preview_rows", [])
+                if preview_rows:
+                    base_name = job.files[idx].name.rsplit(".", 1)[0]
+                    job.preview_data[base_name] = preview_rows
+
         job.status = "done"
         logger.info("Conversao concluida: %d/%d", job.completed, job.total)
 
@@ -439,16 +488,17 @@ def _run_conversion(job: Job, max_workers: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _estimate_cost(total_pages: int) -> float:
-    """Estima custo baseado no numero de paginas.
+    """Estima custo baseado no numero de paginas e modelo ativo.
 
-    Gemini 3 Flash Preview:
-    - Input: ~$0.15/1M tokens
-    - Output: ~$0.60/1M tokens
-    - ~2000 tokens/pagina input, ~1500 tokens/pagina output (estimativa)
+    ~2000 tokens/pagina input, ~1500 tokens/pagina output (estimativa).
+    Pricing varia conforme o modelo selecionado.
     """
+    pricing = MODELOS_DISPONIVEIS.get(config.gemini_model, {})
+    input_price = pricing.get("input_price", 0.15)
+    output_price = pricing.get("output_price", 0.60)
     input_tokens = total_pages * 2000
     output_tokens = total_pages * 1500
-    cost = (input_tokens / 1_000_000) * 0.15 + (output_tokens / 1_000_000) * 0.60
+    cost = (input_tokens / 1_000_000) * input_price + (output_tokens / 1_000_000) * output_price
     return round(cost, 4)
 
 

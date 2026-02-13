@@ -10,7 +10,11 @@
     <div class="container">
         <header>
             <h1>Conversor de Balancetes</h1>
-            <p class="subtitle">PDF &rarr; CSV via Gemini 3 Flash</p>
+            <p class="subtitle" id="subtitle">PDF &rarr; CSV via Gemini 2 Flash</p>
+            <div class="model-toggle">
+                <button class="model-btn active" data-model="gemini-2.0-flash" onclick="setModel('gemini-2.0-flash')">Gemini 2 Flash</button>
+                <button class="model-btn" data-model="gemini-3-flash-preview" onclick="setModel('gemini-3-flash-preview')">Gemini 3 Flash Preview</button>
+            </div>
         </header>
 
         <!-- Upload Area -->
@@ -31,8 +35,8 @@
             <div class="controls">
                 <div class="control-row">
                     <label for="workers-slider">Workers:</label>
-                    <input type="range" id="workers-slider" min="1" max="3" value="2">
-                    <span id="workers-value">2</span>
+                    <input type="range" id="workers-slider" min="1" max="36" value="3">
+                    <span id="workers-value">3</span>
                 </div>
                 <div class="info-row">
                     <span id="total-info"></span>
@@ -65,6 +69,17 @@
         <div id="results-section" class="hidden">
             <h2>Resultados</h2>
             <div id="results-summary"></div>
+
+            <!-- Preview dos dados -->
+            <div id="preview-section" class="hidden">
+                <div class="preview-header">
+                    <h3>Preview dos Dados</h3>
+                    <span id="preview-row-count" class="preview-meta"></span>
+                </div>
+                <div id="preview-tabs"></div>
+                <div id="preview-container" class="preview-table-wrapper"></div>
+            </div>
+
             <div id="results-list"></div>
             <button id="download-all-btn" class="btn-primary" onclick="downloadAll()">
                 Baixar Todos (ZIP)

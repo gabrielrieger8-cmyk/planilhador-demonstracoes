@@ -11,6 +11,10 @@ import io
 import re
 from pathlib import Path
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+
 from src.utils.config import OUTPUT_DIR, logger
 
 
@@ -60,6 +64,12 @@ def save_as_csv(
             data_rows = _postprocess_agrupadoras(data_rows, layout)
             unified = [header] + data_rows
 
+    # Verifica e corrige A/D (Tipo) que vazou para colunas numéricas
+    unified = _fix_tipo_in_numeric_columns(unified)
+
+    # Verifica e corrige D/C que ficaram grudados em colunas numéricas erradas
+    unified = _fix_dc_in_numeric_columns(unified)
+
     # Separa D/C dos valores em colunas próprias de natureza
     unified = _split_natureza_columns(unified)
 
@@ -74,6 +84,145 @@ def save_as_csv(
     return [output_path], unified
 
 
+def save_as_xlsx(
+    unified_rows: list[list[str]],
+    filename: str,
+    output_dir: str | Path | None = None,
+) -> Path:
+    """Gera arquivo .xlsx formatado a partir das linhas unificadas.
+
+    Aplica formatação profissional:
+    - Header: negrito, fundo azul (#2F5496), texto branco, centralizado
+    - Linhas agrupadora (Tipo=A): negrito + fundo cinza claro (#E8E8E8)
+    - Colunas numéricas: alinhamento à direita
+    - Freeze panes no header, auto-filtro, bordas finas
+    - Larguras de coluna otimizadas
+
+    Args:
+        unified_rows: Linhas do CSV (header + dados), já processadas.
+        filename: Nome base do arquivo (sem extensão).
+        output_dir: Diretório de saída.
+
+    Returns:
+        Path do arquivo .xlsx gerado.
+    """
+    out_dir = Path(output_dir) if output_dir else OUTPUT_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = re.sub(r'[<>:"/\\|?*]', "_", filename)
+
+    if not unified_rows:
+        raise ValueError("unified_rows está vazio — impossível gerar xlsx.")
+
+    header = unified_rows[0]
+    layout = _detect_column_layout(header)
+    tipo_idx = layout["tipo"] if layout["has_tipo"] else -1
+
+    # Índices das colunas numéricas (para alinhamento à direita)
+    numeric_cols = {
+        layout["saldo_anterior"],
+        layout["debito"],
+        layout["credito"],
+        layout["saldo_atual"],
+    }
+
+    # --- Estilos ---
+    header_font = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    agrupadora_font = Font(name="Calibri", bold=True, size=11)
+    agrupadora_fill = PatternFill(start_color="E8E8E8", end_color="E8E8E8", fill_type="solid")
+
+    normal_font = Font(name="Calibri", size=11)
+    right_align = Alignment(horizontal="right", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+    center_align = Alignment(horizontal="center", vertical="center")
+
+    thin_border = Border(
+        left=Side(style="thin", color="D0D0D0"),
+        right=Side(style="thin", color="D0D0D0"),
+        top=Side(style="thin", color="D0D0D0"),
+        bottom=Side(style="thin", color="D0D0D0"),
+    )
+
+    # --- Larguras de coluna ---
+    # Nomes típicos: Código, Classificação, Descrição, Tipo, SA, Débito, Crédito, SAT
+    col_widths = {}
+    for i, h in enumerate(header):
+        h_lower = h.strip().lower()
+        if "descri" in h_lower:
+            col_widths[i] = 40
+        elif "classifica" in h_lower:
+            col_widths[i] = 14
+        elif "tipo" in h_lower:
+            col_widths[i] = 6
+        elif "c" == h_lower[:1] and ("dig" in h_lower or "ódigo" in h_lower):
+            col_widths[i] = 12
+        elif "natureza" in h_lower:
+            col_widths[i] = 10
+        elif i in numeric_cols:
+            col_widths[i] = 18
+        else:
+            col_widths[i] = 14
+
+    # --- Cria workbook ---
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Balancete"
+
+    for row_idx, row_data in enumerate(unified_rows):
+        for col_idx, cell_value in enumerate(row_data):
+            cell = ws.cell(row=row_idx + 1, column=col_idx + 1, value=cell_value)
+            cell.border = thin_border
+
+            if row_idx == 0:
+                # Header
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = header_align
+            else:
+                # Dados
+                is_agrupadora = (
+                    tipo_idx >= 0
+                    and tipo_idx < len(row_data)
+                    and row_data[tipo_idx].strip().upper() == "A"
+                )
+
+                if is_agrupadora:
+                    cell.font = agrupadora_font
+                    cell.fill = agrupadora_fill
+                else:
+                    cell.font = normal_font
+
+                # Alinhamento por tipo de coluna
+                if col_idx in numeric_cols:
+                    cell.alignment = right_align
+                elif tipo_idx >= 0 and col_idx == tipo_idx:
+                    cell.alignment = center_align
+                else:
+                    cell.alignment = left_align
+
+    # Larguras
+    for col_idx, width in col_widths.items():
+        col_letter = get_column_letter(col_idx + 1)
+        ws.column_dimensions[col_letter].width = width
+
+    # Freeze panes (header fixo)
+    ws.freeze_panes = "A2"
+
+    # Auto-filtro em todas as colunas
+    if unified_rows:
+        last_col = get_column_letter(len(header))
+        ws.auto_filter.ref = f"A1:{last_col}{len(unified_rows)}"
+
+    output_path = out_dir / f"{safe_name}.xlsx"
+    wb.save(str(output_path))
+
+    logger.info("XLSX formatado salvo: %s (%d linhas)", output_path, len(unified_rows))
+    return output_path
+
+
 def _unify_and_deduplicate(
     tables: list[list[list[str]]],
 ) -> list[list[str]]:
@@ -84,6 +233,8 @@ def _unify_and_deduplicate(
     2. Concatena todas as linhas de dados de todas as tabelas.
     3. Remove linhas que são cabeçalhos repetidos.
     4. Remove linhas exatamente duplicadas (mantém a primeira ocorrência).
+    5. Remove duplicatas por Código+Classificação (colunas 0+1) para
+       capturar linhas quase-iguais de continuações do Gemini.
 
     Args:
         tables: Lista de tabelas extraídas do Markdown.
@@ -99,12 +250,15 @@ def _unify_and_deduplicate(
     header_key = _row_key(header)
 
     # Coleta todas as linhas de dados (exceto cabeçalhos repetidos)
-    seen: set[str] = set()
+    seen_exact: set[str] = set()
+    seen_account: set[str] = set()  # Código+Classificação
     unified: list[list[str]] = []
+    duplicates_exact = 0
+    duplicates_account = 0
 
     # Adiciona o cabeçalho
     unified.append(header)
-    seen.add(header_key)
+    seen_exact.add(header_key)
 
     for table in tables:
         for row in table:
@@ -114,12 +268,33 @@ def _unify_and_deduplicate(
             if key == header_key:
                 continue
 
-            # Pula se é uma linha duplicada já vista
-            if key in seen:
+            # Pula se é uma linha exatamente duplicada
+            if key in seen_exact:
+                duplicates_exact += 1
                 continue
 
-            seen.add(key)
+            # Dedup por Código+Classificação: se as duas primeiras colunas
+            # (código da conta e classificação hierárquica) são iguais,
+            # é a mesma conta — mantém só a primeira ocorrência
+            if len(row) >= 2:
+                codigo = row[0].strip().lower()
+                classificacao = row[1].strip().lower()
+                # Só aplica se parecem ser dados (código numérico ou asterisco)
+                if codigo and (codigo[0].isdigit() or codigo.startswith("*")):
+                    account_key = f"{codigo}|{classificacao}"
+                    if account_key in seen_account:
+                        duplicates_account += 1
+                        continue
+                    seen_account.add(account_key)
+
+            seen_exact.add(key)
             unified.append(row)
+
+    if duplicates_exact or duplicates_account:
+        logger.info(
+            "Deduplicação CSV: %d exatas + %d por conta removidas",
+            duplicates_exact, duplicates_account,
+        )
 
     return unified
 
@@ -252,6 +427,175 @@ def _detect_column_layout(header: list[str]) -> dict[str, int]:
         }
 
 
+def _fix_tipo_in_numeric_columns(rows: list[list[str]]) -> list[list[str]]:
+    """Detecta e corrige linhas onde A/D (Tipo) vazou para colunas numéricas.
+
+    Quando um batch do Gemini produz colunas desalinhadas, o valor "A" ou "D"
+    (indicador de agrupadora/detalhe) pode acabar em uma coluna numérica
+    (Saldo Anterior, Débito, Crédito ou Saldo Atual) em vez de ficar na
+    coluna Tipo (índice 3 no layout de 8 colunas).
+
+    Padrão detectado: a linha tem o número certo de colunas, mas uma coluna
+    numérica contém exatamente "A" ou "D" isolado (não "123,45D" que é
+    valor+natureza). Nesse caso, a linha está deslocada e precisa ser
+    realinhada.
+
+    Estratégia de correção:
+    1. Encontra a posição do "A"/"D" isolado nas colunas numéricas.
+    2. Remove essa célula da posição errada.
+    3. Insere na posição correta da coluna Tipo (índice 3).
+    4. Se a linha ficar com menos colunas, preenche com vazio.
+
+    Args:
+        rows: Linhas unificadas (header + dados).
+
+    Returns:
+        Linhas com Tipo realinhado nas colunas corretas.
+    """
+    if not rows or len(rows) < 2:
+        return rows
+
+    header = rows[0]
+    layout = _detect_column_layout(header)
+
+    # Só faz sentido se o layout tem coluna Tipo
+    if not layout["has_tipo"]:
+        return rows
+
+    tipo_idx = layout["tipo"]  # 3
+    numeric_cols = [
+        layout["saldo_anterior"],  # 4
+        layout["debito"],          # 5
+        layout["credito"],         # 6
+        layout["saldo_atual"],     # 7
+    ]
+    min_cols = layout["min_cols"]  # 8
+
+    # Regex para valor numérico brasileiro (ex: "678.044,93", "0,00", "1.234D")
+    numeric_pattern = re.compile(r"^[\d.,]+[DC]?$", re.IGNORECASE)
+
+    result = [header]
+    fixes_shifted = 0
+    fixes_missing = 0
+
+    for row in rows[1:]:
+        new_row = list(row)
+
+        # === Caso 1: A/D isolado em coluna numérica (linha com 8+ colunas) ===
+        tipo_found_at = -1
+        for col_idx in numeric_cols:
+            if col_idx >= len(new_row):
+                continue
+            val = new_row[col_idx].strip().upper().replace("**", "")
+            if val in ("A", "D"):
+                tipo_found_at = col_idx
+                break
+
+        if tipo_found_at >= 0:
+            current_tipo = new_row[tipo_idx].strip().upper() if tipo_idx < len(new_row) else ""
+            if current_tipo not in ("A", "D"):
+                tipo_value = new_row[tipo_found_at].strip()
+                new_row.pop(tipo_found_at)
+                new_row.insert(tipo_idx, tipo_value)
+                while len(new_row) < min_cols:
+                    new_row.append("")
+                fixes_shifted += 1
+
+        # === Caso 2: Tipo omitido (linha com 7 colunas quando header tem 8) ===
+        elif len(new_row) == min_cols - 1:
+            col3_val = new_row[tipo_idx].strip().replace("**", "") if tipo_idx < len(new_row) else ""
+            if col3_val and numeric_pattern.match(col3_val):
+                new_row.insert(tipo_idx, "")
+                fixes_missing += 1
+
+        result.append(new_row)
+
+    total_fixes = fixes_shifted + fixes_missing
+    if total_fixes:
+        parts = []
+        if fixes_shifted:
+            parts.append(f"{fixes_shifted} realinhada(s)")
+        if fixes_missing:
+            parts.append(f"{fixes_missing} com Tipo inserido")
+        logger.info(
+            "Verificação A/D: %d linha(s) corrigida(s) — %s.",
+            total_fixes, ", ".join(parts),
+        )
+
+    return result
+
+
+def _fix_dc_in_numeric_columns(rows: list[list[str]]) -> list[list[str]]:
+    """Verifica e corrige D/C que ficaram grudados em colunas numéricas erradas.
+
+    O Gemini às vezes extrai valores como "486.481,14D" nas colunas de
+    Débito ou Crédito, onde o D/C não deveria estar (é apenas um número).
+    Também pode acontecer em Saldo Anterior e Saldo Atual.
+
+    Esta função percorre TODAS as colunas numéricas (Saldo Anterior,
+    Débito, Crédito, Saldo Atual) e separa D/C que estiverem grudados.
+    Para Débito e Crédito, o D/C é simplesmente removido (essas colunas
+    são valores puros). Para Saldo Anterior e Saldo Atual, o D/C é
+    preservado (será tratado por _split_natureza_columns depois).
+
+    Exceção: valores "0", "0,00" etc. não precisam de verificação.
+
+    Args:
+        rows: Linhas unificadas (header + dados).
+
+    Returns:
+        Linhas com D/C corrigidos nas colunas numéricas.
+    """
+    if not rows or len(rows) < 2:
+        return rows
+
+    header = rows[0]
+    layout = _detect_column_layout(header)
+    col_debito = layout["debito"]
+    col_credito = layout["credito"]
+
+    # Regex para detectar valor brasileiro com D/C grudado
+    # Ex: "486.481,14D", "1.796.997,71C", "123,45D"
+    dc_pattern = re.compile(r"^([\d.,]+\s*)[DC]$", re.IGNORECASE)
+
+    result = [header]
+    fixes = 0
+
+    for row in rows[1:]:
+        new_row = list(row)
+
+        for col_idx in (col_debito, col_credito):
+            if col_idx >= len(new_row):
+                continue
+
+            val = new_row[col_idx].strip().replace("**", "")
+            if not val:
+                continue
+
+            # Ignora zeros
+            cleaned_zero = val.replace(".", "").replace(",", "").replace("0", "").rstrip("DC")
+            if not cleaned_zero:
+                continue
+
+            # Verifica se tem D ou C no final
+            if val.upper().endswith("D") or val.upper().endswith("C"):
+                match = dc_pattern.match(val)
+                if match:
+                    # Remove o D/C — Débito e Crédito são valores puros
+                    new_row[col_idx] = val[:-1].strip()
+                    fixes += 1
+
+        result.append(new_row)
+
+    if fixes:
+        logger.info(
+            "Verificação D/C: %d valor(es) corrigido(s) nas colunas Débito/Crédito.",
+            fixes,
+        )
+
+    return result
+
+
 def _extract_natureza(value: str) -> tuple[str, str]:
     """Extrai natureza (D/C) de um valor brasileiro.
 
@@ -355,10 +699,17 @@ def _split_natureza_columns(rows: list[list[str]]) -> list[list[str]]:
 
 
 def _postprocess_agrupadoras(rows: list[list[str]], layout: dict[str, int]) -> list[list[str]]:
-    """Pós-processamento: valida e corrige coluna Tipo baseado na hierarquia.
+    """Pós-processamento: valida e corrige coluna Tipo usando múltiplas heurísticas.
 
-    Se uma conta tem classificação que é prefixo de outra conta no balancete,
-    ela DEVE ser agrupadora (Tipo='A'). Corrige caso o Gemini tenha errado.
+    Aplica 2 camadas de detecção (qualquer uma pode promover D→A):
+
+    1. HIERARQUIA (prioritária, se classificação disponível): conta cujo
+       classificação é prefixo de outra (ex: "3.2" é pai de "3.2.1") → A.
+
+    2. SOMA NUMÉRICA (fallback, funciona sem classificação): se o Saldo Atual
+       de uma conta ≈ soma dos Saldos Atuais das linhas consecutivas abaixo,
+       essa conta é agrupadora. Checa também Débito e Crédito para confirmar
+       (agrupadora totaliza tudo: SA, Deb, Cred e SAT).
 
     Args:
         rows: Linhas de dados (sem header e sem resumo).
@@ -371,8 +722,27 @@ def _postprocess_agrupadoras(rows: list[list[str]], layout: dict[str, int]) -> l
         return rows
 
     tipo_idx = layout["tipo"]
+    col_sa = layout["saldo_anterior"]
+    col_deb = layout["debito"]
+    col_cred = layout["credito"]
+    col_sat = layout["saldo_atual"]
+    min_cols = layout["min_cols"]
 
-    # Coleta todas as classificações
+    def _parse_val(val_str: str) -> float:
+        """Parseia valor brasileiro para float (ignora D/C)."""
+        s = val_str.strip().replace("**", "")
+        if not s:
+            return 0.0
+        if s[-1] in ("D", "C", "d", "c"):
+            s = s[:-1]
+        s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+
+    # --- Camada 1: Hierarquia por classificação ---
+    agrupadoras_hierarquia: set[int] = set()
     classificacoes = set()
     for row in rows:
         if len(row) > 1:
@@ -380,30 +750,114 @@ def _postprocess_agrupadoras(rows: list[list[str]], layout: dict[str, int]) -> l
             if c:
                 classificacoes.add(c)
 
-    # Identifica agrupadoras: conta cujo classificacao é prefixo de outra
-    agrupadoras = set()
-    for c in classificacoes:
-        for other in classificacoes:
-            if other != c and other.startswith(c + "."):
-                agrupadoras.add(c)
+    if classificacoes:
+        agrupadoras_class = set()
+        for c in classificacoes:
+            for other in classificacoes:
+                if other != c and other.startswith(c + "."):
+                    agrupadoras_class.add(c)
+                    break
+
+        for i, row in enumerate(rows):
+            if len(row) > 1 and row[1].strip() in agrupadoras_class:
+                agrupadoras_hierarquia.add(i)
+
+    # --- Camada 2: Soma numérica (SA, Deb, Cred, SAT ≈ soma dos filhos) ---
+    agrupadoras_soma: set[int] = set()
+
+    for i, row in enumerate(rows):
+        if len(row) < min_cols:
+            continue
+        # Já é A? Pula
+        if row[tipo_idx].strip().upper() == "A":
+            continue
+        # Já detectada por hierarquia? Pula
+        if i in agrupadoras_hierarquia:
+            continue
+
+        pai_sat = _parse_val(row[col_sat])
+        pai_deb = _parse_val(row[col_deb])
+        pai_cred = _parse_val(row[col_cred])
+        pai_sa = _parse_val(row[col_sa])
+
+        # Precisa ter pelo menos um valor não-zero para comparar
+        if pai_sat == 0.0 and pai_deb == 0.0 and pai_cred == 0.0 and pai_sa == 0.0:
+            continue
+
+        # Soma os filhos consecutivos abaixo
+        soma_sat = 0.0
+        soma_deb = 0.0
+        soma_cred = 0.0
+        soma_sa = 0.0
+        filhos_count = 0
+
+        for j in range(i + 1, len(rows)):
+            filho = rows[j]
+            if len(filho) < min_cols:
+                continue
+
+            soma_sat += _parse_val(filho[col_sat])
+            soma_deb += _parse_val(filho[col_deb])
+            soma_cred += _parse_val(filho[col_cred])
+            soma_sa += _parse_val(filho[col_sa])
+            filhos_count += 1
+
+            # Se Saldo Atual já atingiu o pai, para de somar
+            if pai_sat != 0.0 and abs(soma_sat) >= abs(pai_sat) * 0.999:
                 break
 
-    # Corrige Tipo
+        if filhos_count < 2:
+            continue
+
+        # Verifica se pelo menos 2 das 4 colunas batem (tolerância 1%)
+        matches = 0
+        for pai_v, soma_v in [
+            (pai_sat, soma_sat),
+            (pai_deb, soma_deb),
+            (pai_cred, soma_cred),
+            (pai_sa, soma_sa),
+        ]:
+            if pai_v == 0.0 and soma_v == 0.0:
+                matches += 1  # ambos zero = match
+                continue
+            if pai_v == 0.0 or soma_v == 0.0:
+                continue  # um zero outro não = sem match
+            diff = abs(soma_v - pai_v)
+            tolerancia = max(abs(pai_v) * 0.01, 0.02)
+            if diff <= tolerancia:
+                matches += 1
+
+        if matches >= 2:
+            agrupadoras_soma.add(i)
+
+    # --- Aplica correções ---
+    all_agrupadoras = agrupadoras_hierarquia | agrupadoras_soma
     corrected = 0
-    for row in rows:
+    corrected_hierarquia = 0
+    corrected_soma = 0
+
+    for i in all_agrupadoras:
+        row = rows[i]
         if len(row) <= tipo_idx:
             continue
-        classificacao = row[1].strip()
-        if classificacao in agrupadoras and row[tipo_idx].strip().upper() != "A":
+        if row[tipo_idx].strip().upper() != "A":
             row[tipo_idx] = "A"
             corrected += 1
-        # Se não é agrupadora mas foi marcada como A, corrige para D
-        elif classificacao not in agrupadoras and row[tipo_idx].strip().upper() == "A":
-            # Mantém — Gemini pode ter razão (conta pode ter filhas fora do balancete)
-            pass
+            if i in agrupadoras_hierarquia:
+                corrected_hierarquia += 1
+            else:
+                corrected_soma += 1
 
     if corrected:
-        logger.info("Pós-processamento: %d conta(s) corrigida(s) para agrupadora (Tipo=A).", corrected)
+        parts = []
+        if corrected_hierarquia:
+            parts.append(f"{corrected_hierarquia} por hierarquia")
+        if corrected_soma:
+            parts.append(f"{corrected_soma} por soma numérica")
+        logger.info(
+            "Pós-processamento agrupadoras: %d corrigida(s) → A (%s).",
+            corrected, ", ".join(parts),
+        )
 
     return rows
 

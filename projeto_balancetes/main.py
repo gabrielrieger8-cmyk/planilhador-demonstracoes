@@ -10,7 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-from src.agents.classifier import ProcessingRoute
 from src.orchestrator import Orchestrator, OutputFormat
 from src.utils.config import INPUT_DIR
 
@@ -52,7 +51,6 @@ def main() -> None:
         result = orch.process(
             pdf,
             output_format=OutputFormat.CSV,
-            force_route=ProcessingRoute.GEMINI,
         )
         results.append(result)
 
@@ -72,7 +70,6 @@ def main() -> None:
         name = Path(r.file_path).name
         if r.success:
             print(f"\n  [OK] {name}")
-            print(f"       Rota:   {r.route_used}")
             print(f"       Tempo:  {r.processing_time:.2f}s")
             print(f"       Custo:  ${r.estimated_cost:.4f}")
             print(f"       Saida:")

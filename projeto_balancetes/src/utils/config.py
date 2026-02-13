@@ -52,7 +52,7 @@ class ProcessingConfig:
     """Configurações de processamento."""
 
     # Modelo Gemini a ser utilizado
-    gemini_model: str = "gemini-3-flash-preview"
+    gemini_model: str = "gemini-2.0-flash"
     # Temperatura para geração do Gemini
     gemini_temperature: float = 0.1
     # Máximo de tokens na resposta do Gemini
@@ -65,6 +65,20 @@ class ProcessingConfig:
 
 # Instância global de configuração
 config = ProcessingConfig()
+
+# Modelos disponíveis e pricing (custo por 1M tokens)
+MODELOS_DISPONIVEIS: dict[str, dict] = {
+    "gemini-2.0-flash": {
+        "label": "Gemini 2 Flash",
+        "input_price": 0.10,
+        "output_price": 0.40,
+    },
+    "gemini-3-flash-preview": {
+        "label": "Gemini 3 Flash Preview",
+        "input_price": 0.15,
+        "output_price": 0.60,
+    },
+}
 
 
 # ---------------------------------------------------------------------------
