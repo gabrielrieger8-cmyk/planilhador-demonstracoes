@@ -25,7 +25,7 @@ C:\Controladoria_Plus\
     ├── .env                        # GEMINI_API_KEY
     ├── .gitignore
     ├── app.py                      # FastAPI backend (516 linhas)
-    ├── requirements.txt            # docling, google-genai, pymupdf, python-dotenv, pytest, openpyxl
+    ├── requirements.txt            # google-genai, pymupdf, python-dotenv, pytest, openpyxl
     ├── data/
     │   ├── input/                  # PDFs enviados pelo usuário
     │   └── output/                 # CSVs e XLSXs gerados
@@ -34,7 +34,7 @@ C:\Controladoria_Plus\
     │   │   └── gemini_agent.py     # Agente Gemini principal (987 linhas)
     │   ├── parsers/
     │   │   └── csv_parser.py       # Parser e pós-processamento (1217 linhas)
-    │   ├── orchestrator.py         # Orquestrador (227 linhas)
+    │   ├── orchestrator.py         # Orquestrador (199 linhas)
     │   └── utils/
     │       └── config.py           # Configurações centralizadas (109 linhas)
     └── static/
@@ -104,7 +104,7 @@ Toda a transformação de dados acontece aqui.
 
 **Valores**: Formato brasileiro (ponto=milhar, vírgula=decimal), sufixos D/C para natureza.
 
-### 3. `orchestrator.py` — Orquestrador (227 linhas)
+### 3. `orchestrator.py` — Orquestrador (199 linhas)
 
 Orquestrador simplificado (apenas Gemini, sem Docling).
 
@@ -138,7 +138,7 @@ Orquestrador simplificado (apenas Gemini, sem Docling).
 
 **`renderTable(rows, container, rowCountEl)`**: Monta tabela HTML, detecta coluna Tipo, aplica classe `.agrupadora` em linhas com Tipo=A, zebra striping.
 
-### 6. `config.py` — Configurações (109 linhas)
+### 6. `config.py` — Configurações (90 linhas)
 
 - `GEMINI_API_KEY` do `.env`
 - `ProcessingConfig` dataclass: modelo, temperatura (0.1), max_tokens (200000), timeout (120s)

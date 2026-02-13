@@ -6,31 +6,22 @@ Fluxo simplificado: validação → Gemini → exportação CSV.
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import fitz  # PyMuPDF — apenas para contar páginas
 
 from src.agents.gemini_agent import GeminiAgent, GeminiResult
-from src.parsers.csv_parser import save_as_csv, save_as_xlsx, save_signed_csv, save_synthetic_csv
-from src.parsers.json_parser import save_as_json
-from src.parsers.markdown_parser import (
-    format_financial_markdown,
-    save_as_markdown,
-)
+from src.parsers.csv_parser import save_as_csv, save_as_xlsx
 from src.utils.config import OUTPUT_DIR, logger
 
 
 class OutputFormat(str, Enum):
     """Formatos de saída suportados."""
 
-    MARKDOWN = "markdown"
     CSV = "csv"
-    JSON = "json"
-    ALL = "all"
 
 
 @dataclass
@@ -189,38 +180,20 @@ class Orchestrator:
         files: list[Path] = []
         unified_rows: list[list[str]] = []
 
-        formatted_text = format_financial_markdown(
-            text=text,
-            title=f"Documento: {filename}",
-            source_file=metadata.get("fonte", ""),
-        )
+        # Debug: salva texto raw do Gemini para diagnóstico
+        raw_path = output_dir / f"{filename}_raw.txt"
+        raw_path.write_text(text, encoding="utf-8")
+        logger.info("Texto raw salvo em: %s (%d chars)", raw_path, len(text))
 
-        if output_format in (OutputFormat.MARKDOWN, OutputFormat.ALL):
-            md_path = save_as_markdown(
-                formatted_text, filename, metadata=metadata, output_dir=output_dir
-            )
-            files.append(md_path)
+        csv_paths, unified_rows = save_as_csv(text, filename, output_dir=output_dir)
+        files.extend(csv_paths)
 
-        if output_format in (OutputFormat.CSV, OutputFormat.ALL):
-            # Debug: salva texto raw do Gemini para diagnóstico
-            raw_path = output_dir / f"{filename}_raw.txt"
-            raw_path.write_text(text, encoding="utf-8")
-            logger.info("Texto raw salvo em: %s (%d chars)", raw_path, len(text))
-            csv_paths, unified_rows = save_as_csv(text, filename, output_dir=output_dir)
-            files.extend(csv_paths)
-
-            # Gera .xlsx formatado a partir das mesmas linhas
-            if unified_rows:
-                try:
-                    xlsx_path = save_as_xlsx(unified_rows, filename, output_dir=output_dir)
-                    files.append(xlsx_path)
-                except Exception as exc:
-                    logger.warning("Erro ao gerar XLSX: %s", exc)
-
-        if output_format in (OutputFormat.JSON, OutputFormat.ALL):
-            json_path = save_as_json(
-                text, filename, metadata=metadata, output_dir=output_dir
-            )
-            files.append(json_path)
+        # Gera .xlsx formatado a partir das mesmas linhas
+        if unified_rows:
+            try:
+                xlsx_path = save_as_xlsx(unified_rows, filename, output_dir=output_dir)
+                files.append(xlsx_path)
+            except Exception as exc:
+                logger.warning("Erro ao gerar XLSX: %s", exc)
 
         return files, unified_rows

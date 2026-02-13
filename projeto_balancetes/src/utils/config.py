@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -30,23 +30,6 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
 
 
-# ---------------------------------------------------------------------------
-# Thresholds para classificação de conteúdo
-# ---------------------------------------------------------------------------
-@dataclass
-class ClassifierThresholds:
-    """Limiares usados pelo classificador de conteúdo PDF."""
-
-    # Proporção mínima de área ocupada por imagens para considerar "visual"
-    image_area_ratio: float = 0.15
-    # Número mínimo de tabelas detectadas para considerar "tabular"
-    min_tables_for_complex: int = 1
-    # Proporção mínima de texto para considerar "texto predominante"
-    text_density_ratio: float = 0.60
-    # Número mínimo de caracteres por página para considerar texto denso
-    min_chars_per_page: int = 200
-
-
 @dataclass
 class ProcessingConfig:
     """Configurações de processamento."""
@@ -59,8 +42,6 @@ class ProcessingConfig:
     gemini_max_tokens: int = 200000
     # Timeout em segundos para chamadas de API
     api_timeout: int = 120
-    # Thresholds do classificador
-    thresholds: ClassifierThresholds = field(default_factory=ClassifierThresholds)
 
 
 # Instância global de configuração
