@@ -3,6 +3,10 @@ let jobId = null;
 let uploadedFiles = [];
 let eventSource = null;
 let selectedModel = 'gemini-2.0-flash';
+let signDialogResolve = null;
+let currentPreviewData = null;
+let selectedReferenceName = null;  // referência selecionada para a conversão
+let allReferences = [];            // cache da lista de referências
 
 // Elements
 const dropZone = document.getElementById('drop-zone');
@@ -20,6 +24,7 @@ const convertBtn = document.getElementById('convert-btn');
 // ---------------------------------------------------------------------------
 const MODEL_LABELS = {
     'gemini-2.0-flash': 'Gemini 2 Flash',
+    'gemini-2.5-flash': 'Gemini 2.5 Flash',
     'gemini-3-flash-preview': 'Gemini 3 Flash Preview',
 };
 
@@ -37,12 +42,10 @@ async function setModel(modelId) {
 
         selectedModel = modelId;
 
-        // Atualiza botões do toggle
         document.querySelectorAll('.model-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.model === modelId);
         });
 
-        // Atualiza subtítulo
         document.getElementById('subtitle').innerHTML =
             `PDF &rarr; CSV via ${MODEL_LABELS[modelId] || modelId}`;
     } catch (err) {
@@ -77,7 +80,6 @@ fileInput.addEventListener('change', () => {
     fileInput.value = '';
 });
 
-// Workers slider
 workersSlider.addEventListener('input', () => {
     workersValue.textContent = workersSlider.value;
 });
@@ -134,6 +136,9 @@ function renderFileList(data) {
     });
 
     updateInfo(data);
+
+    // Carrega seletor de referências
+    loadAllReferences();
 }
 
 function updateInfo(data) {
@@ -183,7 +188,11 @@ async function startConversion() {
     convertBtn.textContent = 'Convertendo...';
 
     try {
-        const resp = await fetch(`/convert/${jobId}?workers=${workers}`, {
+        let url = `/convert/${jobId}?workers=${workers}`;
+        if (selectedReferenceName) {
+            url += `&reference=${encodeURIComponent(selectedReferenceName)}`;
+        }
+        const resp = await fetch(url, {
             method: 'POST'
         });
 
@@ -195,17 +204,14 @@ async function startConversion() {
             return;
         }
 
-        // Show progress, hide results
         progressSection.classList.remove('hidden');
         resultsSection.classList.add('hidden');
 
-        // Reset progress bar
         const bar = document.getElementById('progress-bar');
         bar.style.width = '0%';
         bar.classList.add('active');
         bar.classList.remove('done');
 
-        // Start SSE
         listenProgress();
 
     } catch (err) {
@@ -264,7 +270,6 @@ const STAGE_ICONS = {
 function renderProgress(data) {
     const pct = data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0;
 
-    // Progress bar
     const bar = document.getElementById('progress-bar');
     bar.style.width = pct + '%';
 
@@ -273,19 +278,14 @@ function renderProgress(data) {
         bar.classList.add('done');
     }
 
-    // Percentage
     document.getElementById('progress-pct').textContent = pct + '%';
-
-    // Text
     document.getElementById('progress-text').textContent =
         `${data.completed} de ${data.total} concluido(s)`;
 
-    // Elapsed timer
     if (data.elapsed !== undefined) {
         document.getElementById('elapsed-timer').textContent = formatTime(data.elapsed);
     }
 
-    // File details
     const details = document.getElementById('progress-details');
     details.innerHTML = '';
 
@@ -293,7 +293,6 @@ function renderProgress(data) {
         const div = document.createElement('div');
         div.className = `progress-item ${p.status}`;
 
-        // Icon
         let iconHtml = '';
         if (p.status === 'queued') {
             iconHtml = '<span class="pulse-dot"></span>';
@@ -305,7 +304,6 @@ function renderProgress(data) {
             iconHtml = '<span style="color:#e53935;">✗</span>';
         }
 
-        // Right-side content based on status
         let rightHtml = '';
 
         if (p.status === 'queued') {
@@ -353,12 +351,10 @@ async function onConversionDone(lastData) {
     convertBtn.disabled = false;
     convertBtn.textContent = 'Converter';
 
-    // Mark progress bar as done
     const bar = document.getElementById('progress-bar');
     bar.classList.remove('active');
     bar.classList.add('done');
 
-    // Fetch results
     try {
         const resp = await fetch(`/results/${jobId}`);
         if (!resp.ok) return;
@@ -366,6 +362,12 @@ async function onConversionDone(lastData) {
         const data = await resp.json();
         renderResults(data);
         resultsSection.classList.remove('hidden');
+
+        if (data.preview_data && Object.keys(data.preview_data).length > 0) {
+            currentPreviewData = data.preview_data;
+            showXlsxSection(data.preview_data);
+            showCorrectionSection(data.preview_data);
+        }
 
     } catch (err) {
         console.error('Erro ao buscar resultados:', err);
@@ -399,7 +401,6 @@ function renderResults(data) {
         </span>
     `;
 
-    // Preview
     if (data.preview_data && Object.keys(data.preview_data).length > 0) {
         renderPreview(data.preview_data);
     }
@@ -448,7 +449,6 @@ function renderPreview(previewData) {
 
     const keys = Object.keys(previewData);
 
-    // Tabs se houver múltiplos arquivos
     tabsContainer.innerHTML = '';
     if (keys.length > 1) {
         keys.forEach((key, idx) => {
@@ -464,7 +464,6 @@ function renderPreview(previewData) {
         });
     }
 
-    // Renderiza a primeira tabela
     if (keys.length > 0) {
         renderTable(previewData[keys[0]], container, rowCountEl);
     }
@@ -481,13 +480,11 @@ function renderTable(rows, container, rowCountEl) {
     const dataRows = rows.slice(1);
     rowCountEl.textContent = `${dataRows.length} linhas`;
 
-    // Detecta índice da coluna Tipo
     let tipoIdx = -1;
     header.forEach((h, i) => {
         if (h.trim().toLowerCase() === 'tipo') tipoIdx = i;
     });
 
-    // Detecta colunas numéricas (Saldo, Débito, Crédito)
     const numericCols = new Set();
     header.forEach((h, i) => {
         const lower = h.trim().toLowerCase();
@@ -529,6 +526,855 @@ function escapeHtml(str) {
 }
 
 // ---------------------------------------------------------------------------
+// XLSX Profissional
+// ---------------------------------------------------------------------------
+function showXlsxSection(previewData) {
+    document.getElementById('xlsx-section').classList.remove('hidden');
+
+    const keys = Object.keys(previewData);
+    if (keys.length > 0) {
+        detectSigns(keys[0]);
+    }
+}
+
+async function detectSigns(baseName) {
+    const infoEl = document.getElementById('sign-detection-info');
+    infoEl.textContent = 'Analisando...';
+
+    try {
+        const resp = await fetch(`/detect-signs/${jobId}/${encodeURIComponent(baseName)}`, {
+            method: 'POST',
+        });
+
+        if (!resp.ok) {
+            infoEl.textContent = '';
+            return;
+        }
+
+        const data = await resp.json();
+
+        if (data.has_dc && data.matches_convention) {
+            infoEl.textContent = 'D/C detectado — convencao padrao confirmada';
+            infoEl.className = 'sign-info sign-ok';
+        } else if (data.has_dc && !data.matches_convention) {
+            infoEl.textContent = 'D/C detectado — convencao NAO padrao';
+            infoEl.className = 'sign-info sign-warn';
+        } else if (data.has_signs) {
+            infoEl.textContent = 'Valores ja tem sinais +/-';
+            infoEl.className = 'sign-info sign-ok';
+        } else if (data.needs_user_input) {
+            infoEl.textContent = 'Sem D/C e sem sinais — escolha abaixo';
+            infoEl.className = 'sign-info sign-ask';
+        } else {
+            infoEl.textContent = data.details || '';
+            infoEl.className = 'sign-info';
+        }
+    } catch (err) {
+        infoEl.textContent = '';
+    }
+}
+
+async function generateXlsx() {
+    if (!jobId) return;
+
+    const btn = document.getElementById('xlsx-btn');
+    const resultDiv = document.getElementById('xlsx-result');
+    const signMode = document.getElementById('xlsx-sign-mode').value;
+
+    btn.disabled = true;
+    btn.textContent = 'Gerando...';
+    resultDiv.classList.add('hidden');
+
+    try {
+        const resp = await fetch(`/convert-xlsx/${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sign_mode: signMode }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert(err.detail || 'Erro ao gerar XLSX');
+            return;
+        }
+
+        const data = await resp.json();
+
+        resultDiv.classList.remove('hidden');
+        resultDiv.innerHTML = '';
+
+        const f = data.files[0];
+        if (!f) return;
+
+        if (f.error) {
+            resultDiv.innerHTML = `<div class="xlsx-error">Erro: ${f.error}</div>`;
+            return;
+        }
+
+        const signInfo = f.sign_detection || {};
+        let signText = '';
+        if (signInfo.has_dc && signInfo.matches_convention) {
+            signText = ' — D/C convertido';
+        } else if (signInfo.has_signs) {
+            signText = ' — sinais mantidos';
+        } else if (signInfo.needs_user_input) {
+            signText = ' — sem conversao de sinais';
+        }
+
+        const tabsCount = f.tabs_count || 0;
+        const periodos = (f.periodos || []).join(', ');
+
+        resultDiv.innerHTML = `
+            <div class="xlsx-result-item">
+                <span>📊 ${f.filename}</span>
+                <span class="xlsx-periodo">${tabsCount} aba${tabsCount > 1 ? 's' : ''}: ${periodos}${signText}</span>
+                <button class="btn-download" onclick="downloadFile('${f.filename}')">Baixar</button>
+            </div>
+        `;
+
+        // Mostra seção de referência após gerar XLSX
+        showReferenceSection();
+
+        refreshResults();
+
+    } catch (err) {
+        alert('Erro: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Gerar XLSX Profissional';
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Sign Dialog
+// ---------------------------------------------------------------------------
+function showSignDialog(message) {
+    return new Promise((resolve) => {
+        signDialogResolve = resolve;
+        document.getElementById('sign-dialog-message').textContent = message;
+        document.getElementById('sign-dialog').classList.remove('hidden');
+    });
+}
+
+function signDialogConfirm(mode) {
+    document.getElementById('sign-dialog').classList.add('hidden');
+    if (signDialogResolve) {
+        signDialogResolve(mode);
+        signDialogResolve = null;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Correction / Resubmission
+// ---------------------------------------------------------------------------
+function showCorrectionSection(previewData) {
+    const section = document.getElementById('correction-section');
+    const select = document.getElementById('correction-file');
+
+    section.classList.remove('hidden');
+
+    select.innerHTML = '<option value="">Selecione o arquivo...</option>';
+    Object.keys(previewData).forEach(key => {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = key;
+        select.appendChild(opt);
+    });
+}
+
+async function submitCorrection() {
+    const baseName = document.getElementById('correction-file').value;
+    const correction = document.getElementById('correction-text').value.trim();
+    const statusDiv = document.getElementById('correction-status');
+
+    if (!baseName) {
+        alert('Selecione um arquivo.');
+        return;
+    }
+    if (!correction) {
+        alert('Descreva a correcao necessaria.');
+        return;
+    }
+
+    statusDiv.classList.remove('hidden');
+    statusDiv.innerHTML = '<span class="spinner"></span> Reenviando ao Gemini...';
+
+    try {
+        const resp = await fetch(`/resubmit/${jobId}/${encodeURIComponent(baseName)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ correction, version: 2 }),
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            statusDiv.innerHTML = `<span class="error-info">Erro: ${err.detail || 'falha'}</span>`;
+            return;
+        }
+
+        statusDiv.innerHTML = 'Resubmissao iniciada. Aguarde...';
+        pollCorrectionResult(baseName, 2);
+
+    } catch (err) {
+        statusDiv.innerHTML = `<span class="error-info">Erro: ${err.message}</span>`;
+    }
+}
+
+async function pollCorrectionResult(baseName, version) {
+    const statusDiv = document.getElementById('correction-status');
+    const key = `${baseName}_v${version}`;
+    let attempts = 0;
+
+    const interval = setInterval(async () => {
+        attempts++;
+        if (attempts > 120) {
+            clearInterval(interval);
+            statusDiv.innerHTML = 'Tempo esgotado. Verifique os resultados manualmente.';
+            return;
+        }
+
+        try {
+            const resp = await fetch(`/results/${jobId}`);
+            if (!resp.ok) return;
+
+            const data = await resp.json();
+            if (data.preview_data && data.preview_data[key]) {
+                clearInterval(interval);
+                statusDiv.innerHTML = `Nova versao <strong>${key}</strong> gerada!`;
+                renderResults(data);
+                currentPreviewData = data.preview_data;
+                showCorrectionSection(data.preview_data);
+            }
+        } catch (err) {
+            // continue polling
+        }
+    }, 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Reference / RAG — painel unificado (pré e pós-conversão)
+// ---------------------------------------------------------------------------
+let refSource = 'system';  // 'system' ou 'upload' (post-conversion only)
+let refUploadedFilePre = null;
+let refUploadedFilePost = null;
+
+// Toggle painel colapsável
+function toggleRefPanel(which) {
+    const body = document.getElementById(`ref-panel-${which}-body`);
+    const toggle = document.getElementById(`ref-panel-${which}-toggle`);
+    const isOpen = !body.classList.contains('collapsed');
+    if (isOpen) {
+        body.classList.add('collapsed');
+        toggle.innerHTML = '&#9654;';  // ▶
+    } else {
+        body.classList.remove('collapsed');
+        toggle.innerHTML = '&#9660;';  // ▼
+    }
+}
+
+// Carrega referências e popula ambos os painéis
+async function loadAllReferences() {
+    try {
+        const resp = await fetch('/references');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        allReferences = data.references || [];
+
+        // Atualiza seletor no painel pré
+        renderRefList(allReferences);
+
+        // Atualiza badge no header
+        const badgePre = document.getElementById('ref-panel-pre-badge');
+        const badgePost = document.getElementById('ref-panel-post-badge');
+        if (allReferences.length > 0) {
+            badgePre.textContent = allReferences.length;
+            badgePre.classList.remove('hidden');
+            if (badgePost) {
+                badgePost.textContent = allReferences.length;
+                badgePost.classList.remove('hidden');
+            }
+        } else {
+            badgePre.classList.add('hidden');
+            if (badgePost) badgePost.classList.add('hidden');
+        }
+
+        // Mostra/esconde empty state
+        const emptyEl = document.getElementById('ref-list-empty');
+        if (allReferences.length === 0) {
+            emptyEl.classList.remove('hidden');
+            document.getElementById('ref-selector-list').classList.add('hidden');
+            document.getElementById('ref-search').classList.add('hidden');
+        } else {
+            emptyEl.classList.add('hidden');
+            document.getElementById('ref-selector-list').classList.remove('hidden');
+            document.getElementById('ref-search').classList.remove('hidden');
+        }
+
+        // Atualiza listas de referências ativas em ambos os painéis
+        renderRefActiveLists();
+
+        // Atualiza seleção no pós se visível
+        updatePostSelectionDisplay();
+    } catch (err) {
+        console.error('Erro ao carregar referências:', err);
+    }
+}
+
+function renderRefList(refs) {
+    const list = document.getElementById('ref-selector-list');
+    list.innerHTML = '';
+
+    if (refs.length === 0) return;
+
+    refs.forEach(ref => {
+        const div = document.createElement('div');
+        div.className = 'ref-list-item' + (selectedReferenceName === ref.filename ? ' selected' : '');
+        div.onclick = () => selectReference(ref);
+        div.innerHTML = `
+            <span class="ref-list-name">${escapeHtml(ref.display_name || ref.empresa || ref.filename)}</span>
+            <span class="ref-list-meta">${ref.total_contas} contas · ${ref.grupos} grupos</span>
+        `;
+        list.appendChild(div);
+    });
+}
+
+function filterReferences() {
+    const query = document.getElementById('ref-search').value.toLowerCase().trim();
+    if (!query) {
+        renderRefList(allReferences);
+        return;
+    }
+    const filtered = allReferences.filter(ref => {
+        const name = (ref.display_name || ref.empresa || ref.filename || '').toLowerCase();
+        const periodo = (ref.periodo || '').toLowerCase();
+        return name.includes(query) || periodo.includes(query);
+    });
+    renderRefList(filtered);
+}
+
+function selectReference(ref) {
+    selectedReferenceName = ref.filename;
+    const displayName = ref.display_name || ref.empresa || ref.filename;
+
+    // Atualiza seleção no pré-conversão
+    const selectedEl = document.getElementById('ref-selected');
+    const nameEl = document.getElementById('ref-selected-name');
+    selectedEl.classList.remove('hidden');
+    nameEl.textContent = `📚 ${displayName}`;
+
+    // Fecha a lista
+    document.getElementById('ref-selector-list').classList.add('collapsed');
+    document.getElementById('ref-search').value = '';
+
+    // Atualiza visual da lista
+    renderRefList(allReferences);
+
+    // Atualiza seleção no pós-conversão
+    updatePostSelectionDisplay();
+}
+
+function clearSelectedRef() {
+    selectedReferenceName = null;
+
+    // Limpa pré
+    document.getElementById('ref-selected').classList.add('hidden');
+    document.getElementById('ref-selected-name').textContent = '';
+    document.getElementById('ref-selector-list').classList.remove('collapsed');
+    renderRefList(allReferences);
+
+    // Limpa pós
+    updatePostSelectionDisplay();
+}
+
+function updatePostSelectionDisplay() {
+    const selectedPost = document.getElementById('ref-selected-post');
+    const namePost = document.getElementById('ref-selected-name-post');
+    const noSelection = document.getElementById('ref-no-selection-post');
+
+    if (!selectedPost) return;
+
+    if (selectedReferenceName) {
+        const ref = allReferences.find(r => r.filename === selectedReferenceName);
+        const displayName = ref ? (ref.display_name || ref.empresa || ref.filename) : selectedReferenceName;
+        selectedPost.classList.remove('hidden');
+        namePost.textContent = `📚 ${displayName}`;
+        if (noSelection) noSelection.classList.add('hidden');
+    } else {
+        selectedPost.classList.add('hidden');
+        namePost.textContent = '';
+        if (noSelection) noSelection.classList.remove('hidden');
+    }
+}
+
+function renderRefActiveLists() {
+    // Renderiza lista em pré
+    renderRefActiveList('refs-list-pre', 'ref-active-list-pre');
+    // Renderiza lista em pós
+    renderRefActiveList('refs-list-post', 'ref-active-list-post');
+}
+
+function renderRefActiveList(listId, containerId) {
+    const container = document.getElementById(containerId);
+    const list = document.getElementById(listId);
+    if (!container || !list) return;
+
+    if (allReferences.length === 0) {
+        container.classList.add('hidden');
+        return;
+    }
+
+    container.classList.remove('hidden');
+    list.innerHTML = '';
+
+    allReferences.forEach(ref => {
+        const div = document.createElement('div');
+        div.className = 'ref-item';
+        div.innerHTML = `
+            <span class="ref-name">${escapeHtml(ref.display_name || ref.empresa || ref.filename)} — ${ref.periodo || 'sem período'}</span>
+            <span class="ref-meta">${ref.total_contas} contas · ${ref.grupos} grupos</span>
+            <button class="btn-ref-remove" onclick="deleteReference('${ref.filename}')" title="Remover">&times;</button>
+        `;
+        list.appendChild(div);
+    });
+}
+
+// Mostra painel pós-conversão
+function showReferenceSection() {
+    document.getElementById('reference-section').classList.remove('hidden');
+    loadAllReferences();
+}
+
+// Alterna entre source system/upload (pós-conversão)
+function setRefSource(source) {
+    refSource = source;
+    document.querySelectorAll('.ref-source-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.source === source);
+    });
+
+    const uploadArea = document.getElementById('ref-upload-area-post');
+    if (source === 'upload') {
+        uploadArea.classList.remove('hidden');
+    } else {
+        uploadArea.classList.add('hidden');
+    }
+}
+
+// Inicializa drag & drop para ambos os painéis
+(function initRefUpload() {
+    document.addEventListener('DOMContentLoaded', () => {
+        // Painel pré-conversão
+        initDropZone('ref-drop-zone-pre', 'ref-file-input-pre', 'pre');
+        // Painel pós-conversão
+        initDropZone('ref-drop-zone-post', 'ref-file-input-post', 'post');
+    });
+})();
+
+function initDropZone(dropZoneId, fileInputId, which) {
+    const dz = document.getElementById(dropZoneId);
+    const fi = document.getElementById(fileInputId);
+    if (!dz || !fi) return;
+
+    dz.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dz.classList.add('drag-over');
+    });
+    dz.addEventListener('dragleave', () => {
+        dz.classList.remove('drag-over');
+    });
+    dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dz.classList.remove('drag-over');
+        const file = Array.from(e.dataTransfer.files).find(f =>
+            f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')
+        );
+        if (file) setRefFile(file, which);
+    });
+
+    fi.addEventListener('change', () => {
+        if (fi.files.length > 0) setRefFile(fi.files[0], which);
+        fi.value = '';
+    });
+}
+
+function setRefFile(file, which) {
+    if (which === 'pre') {
+        refUploadedFilePre = file;
+    } else {
+        refUploadedFilePost = file;
+    }
+    const nameEl = document.getElementById(`ref-file-name-${which}`);
+    nameEl.classList.remove('hidden');
+    nameEl.innerHTML = `
+        <span class="ref-file-icon">📊</span>
+        <span>${file.name}</span>
+        <span class="ref-file-size">(${formatSize(file.size)})</span>
+        <button class="btn-ref-remove" onclick="clearRefFile('${which}')" title="Remover">&times;</button>
+    `;
+}
+
+function clearRefFile(which) {
+    if (which === 'pre') {
+        refUploadedFilePre = null;
+    } else {
+        refUploadedFilePost = null;
+    }
+    const nameEl = document.getElementById(`ref-file-name-${which}`);
+    nameEl.classList.add('hidden');
+    nameEl.innerHTML = '';
+}
+
+// Salvar referência do painel pré-conversão (upload only)
+async function saveReferencePre() {
+    const btn = document.getElementById('save-ref-btn-pre');
+    const status = document.getElementById('ref-status-pre');
+    const refName = document.getElementById('ref-name-pre').value.trim();
+    const instructions = document.getElementById('ref-instructions-pre').value.trim();
+
+    if (!refName) {
+        status.textContent = 'Informe o nome da referência.';
+        status.className = 'reference-status error';
+        document.getElementById('ref-name-pre').focus();
+        return;
+    }
+
+    if (!refUploadedFilePre) {
+        status.textContent = 'Anexe o arquivo XLSX.';
+        status.className = 'reference-status error';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Extraindo padrão...';
+    status.textContent = '';
+
+    try {
+        const refModel = document.getElementById('ref-model-pre').value;
+        const formData = new FormData();
+        formData.append('file', refUploadedFilePre);
+        formData.append('instructions', instructions);
+        formData.append('name', refName);
+        formData.append('model', refModel);
+
+        const resp = await fetch('/upload-reference', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            status.textContent = 'Erro: ' + (err.detail || 'falha');
+            status.className = 'reference-status error';
+            return;
+        }
+
+        const data = await resp.json();
+
+        status.textContent = 'Referência salva com sucesso!';
+        status.className = 'reference-status success';
+
+        // Limpa formulário
+        document.getElementById('ref-name-pre').value = '';
+        document.getElementById('ref-instructions-pre').value = '';
+        clearRefFile('pre');
+
+        // Recarrega listas e seleciona automaticamente a nova
+        await loadAllReferences();
+
+        // Auto-seleciona a referência recém-criada
+        const newRef = allReferences.find(r => (r.display_name || '') === refName || r.filename === data.filename);
+        if (newRef) selectReference(newRef);
+
+    } catch (err) {
+        status.textContent = 'Erro: ' + err.message;
+        status.className = 'reference-status error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Salvar Referência';
+    }
+}
+
+// Salvar referência do painel pós-conversão (system ou upload)
+async function saveReferencePost() {
+    const btn = document.getElementById('save-ref-btn-post');
+    const status = document.getElementById('ref-status-post');
+    const infoDiv = document.getElementById('ref-info-post');
+    const detailsDiv = document.getElementById('ref-details-post');
+    const refName = document.getElementById('ref-name-post').value.trim();
+    const instructions = document.getElementById('ref-instructions-post').value.trim();
+
+    if (!refName) {
+        status.textContent = 'Informe o nome da referência.';
+        status.className = 'reference-status error';
+        document.getElementById('ref-name-post').focus();
+        return;
+    }
+
+    if (refSource === 'upload' && !refUploadedFilePost) {
+        status.textContent = 'Anexe o XLSX corrigido ou use o XLSX gerado.';
+        status.className = 'reference-status error';
+        return;
+    }
+
+    if (refSource === 'system' && !jobId) {
+        status.textContent = 'Gere o XLSX Profissional primeiro.';
+        status.className = 'reference-status error';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Extraindo padrão...';
+    status.textContent = '';
+    infoDiv.classList.add('hidden');
+
+    try {
+        let resp;
+        const refModel = document.getElementById('ref-model-post').value;
+
+        if (refSource === 'upload') {
+            const formData = new FormData();
+            formData.append('file', refUploadedFilePost);
+            formData.append('instructions', instructions);
+            formData.append('name', refName);
+            formData.append('model', refModel);
+            resp = await fetch('/upload-reference', { method: 'POST', body: formData });
+        } else {
+            resp = await fetch(`/save-reference/${jobId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ instructions, name: refName, model: refModel }),
+            });
+        }
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            status.textContent = 'Erro: ' + (err.detail || 'falha');
+            status.className = 'reference-status error';
+            return;
+        }
+
+        const data = await resp.json();
+
+        status.textContent = 'Referência salva com sucesso!';
+        status.className = 'reference-status success';
+
+        infoDiv.classList.remove('hidden');
+        detailsDiv.innerHTML = `
+            <div class="ref-stat">
+                <span class="label">Nome:</span>
+                <span class="value">${escapeHtml(data.display_name || refName)}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Empresa:</span>
+                <span class="value">${data.empresa || 'N/A'}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Período:</span>
+                <span class="value">${data.periodo || 'N/A'}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Contas:</span>
+                <span class="value">${data.total_contas}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Grupos:</span>
+                <span class="value">${data.grupos}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Nós hierárquicos:</span>
+                <span class="value">${data.hierarchy_nodes}</span>
+            </div>
+            <div class="ref-stat">
+                <span class="label">Exemplos de sinais:</span>
+                <span class="value">${data.sign_examples}</span>
+            </div>
+            <div class="ref-preview">
+                <details>
+                    <summary>Preview da referência</summary>
+                    <pre>${escapeHtml(data.preview || '')}</pre>
+                </details>
+            </div>
+        `;
+
+        // Limpa formulário
+        document.getElementById('ref-name-post').value = '';
+        document.getElementById('ref-instructions-post').value = '';
+        if (refSource === 'upload') clearRefFile('post');
+
+        // Recarrega listas
+        await loadAllReferences();
+
+        // Auto-seleciona
+        const newRef = allReferences.find(r => (r.display_name || '') === refName || r.filename === data.filename);
+        if (newRef) selectReference(newRef);
+
+    } catch (err) {
+        status.textContent = 'Erro: ' + err.message;
+        status.className = 'reference-status error';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Salvar como Referência';
+    }
+}
+
+async function deleteReference(filename) {
+    try {
+        const resp = await fetch(`/references/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+        });
+        if (resp.ok) {
+            // Se deletou a referência selecionada, limpa seleção
+            if (selectedReferenceName === filename) {
+                clearSelectedRef();
+            }
+            await loadAllReferences();
+        }
+    } catch (err) {
+        console.error('Erro ao remover referência:', err);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Chat — Atualizar referências via IA
+// ---------------------------------------------------------------------------
+let chatHistory = [];  // histórico de mensagens {role: 'user'|'assistant', content: ''}
+
+function toggleChatPanel() {
+    const body = document.getElementById('chat-body');
+    const toggle = document.getElementById('chat-toggle');
+    const isOpen = !body.classList.contains('collapsed');
+    if (isOpen) {
+        body.classList.add('collapsed');
+        toggle.innerHTML = '&#9654;';
+    } else {
+        body.classList.remove('collapsed');
+        toggle.innerHTML = '&#9660;';
+        populateChatRefSelector();
+    }
+}
+
+function populateChatRefSelector() {
+    const select = document.getElementById('chat-ref-select');
+    const current = select.value;
+    select.innerHTML = '<option value="">Selecione uma referência...</option>';
+    allReferences.forEach(ref => {
+        const opt = document.createElement('option');
+        opt.value = ref.filename;
+        opt.textContent = ref.display_name || ref.empresa || ref.filename;
+        select.appendChild(opt);
+    });
+    if (current) select.value = current;
+}
+
+function chatKeyHandler(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendChatMessage();
+    }
+}
+
+async function sendChatMessage() {
+    const input = document.getElementById('chat-input');
+    const refSelect = document.getElementById('chat-ref-select');
+    const modelSelect = document.getElementById('chat-model-select');
+    const btn = document.getElementById('chat-send-btn');
+    const messagesDiv = document.getElementById('chat-messages');
+
+    const message = input.value.trim();
+    if (!message) return;
+
+    const refName = refSelect.value;
+    if (!refName) {
+        alert('Selecione uma referência para editar.');
+        return;
+    }
+
+    // Adiciona mensagem do usuário
+    chatHistory.push({ role: 'user', content: message });
+    appendChatBubble('user', message);
+    input.value = '';
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+
+    // Mostra indicador de carregamento
+    const loadingId = appendChatBubble('assistant', '<span class="spinner"></span> Analisando...');
+
+    try {
+        const resp = await fetch('/chat-reference', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                reference_name: refName,
+                message: message,
+                model: modelSelect.value,
+                history: chatHistory.slice(-10),  // últimas 10 mensagens
+            }),
+        });
+
+        // Remove loading
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) loadingEl.remove();
+
+        if (!resp.ok) {
+            const err = await resp.json();
+            appendChatBubble('assistant', 'Erro: ' + (err.detail || 'falha'));
+            return;
+        }
+
+        const data = await resp.json();
+        chatHistory.push({ role: 'assistant', content: data.response });
+        appendChatBubble('assistant', data.response);
+
+        if (data.updated) {
+            appendChatBubble('system', 'Referência atualizada com sucesso!');
+            await loadAllReferences();
+        }
+
+    } catch (err) {
+        const loadingEl = document.getElementById(loadingId);
+        if (loadingEl) loadingEl.remove();
+        appendChatBubble('assistant', 'Erro de conexão: ' + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Enviar';
+    }
+}
+
+function appendChatBubble(role, content) {
+    const messagesDiv = document.getElementById('chat-messages');
+    const id = 'chat-msg-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+
+    const div = document.createElement('div');
+    div.id = id;
+    div.className = `chat-bubble chat-${role}`;
+
+    if (role === 'user') {
+        div.innerHTML = `<strong>Você:</strong> ${escapeHtml(content)}`;
+    } else if (role === 'system') {
+        div.innerHTML = `<em>${content}</em>`;
+    } else {
+        div.innerHTML = `<strong>IA:</strong> ${content}`;
+    }
+
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return id;
+}
+
+// ---------------------------------------------------------------------------
+// Refresh results
+// ---------------------------------------------------------------------------
+async function refreshResults() {
+    try {
+        const resp = await fetch(`/results/${jobId}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderResults(data);
+    } catch (err) {
+        // ignore
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Download
 // ---------------------------------------------------------------------------
 function downloadFile(filename) {
@@ -546,6 +1392,7 @@ function downloadAll() {
 function resetApp() {
     jobId = null;
     uploadedFiles = [];
+    currentPreviewData = null;
 
     if (eventSource) {
         eventSource.close();
@@ -567,6 +1414,43 @@ function resetApp() {
     document.getElementById('preview-section').classList.add('hidden');
     document.getElementById('preview-tabs').innerHTML = '';
     document.getElementById('preview-container').innerHTML = '';
+    document.getElementById('xlsx-section').classList.add('hidden');
+    document.getElementById('xlsx-result').classList.add('hidden');
+    document.getElementById('correction-section').classList.add('hidden');
+    document.getElementById('correction-status').classList.add('hidden');
+    document.getElementById('correction-text').value = '';
+    // Reset painel pós-conversão
+    document.getElementById('reference-section').classList.add('hidden');
+    document.getElementById('ref-info-post').classList.add('hidden');
+    document.getElementById('ref-status-post').textContent = '';
+    document.getElementById('ref-instructions-post').value = '';
+    document.getElementById('ref-name-post').value = '';
+    document.getElementById('ref-upload-area-post').classList.add('hidden');
+    document.getElementById('ref-active-list-post').classList.add('hidden');
+    clearRefFile('post');
+    refSource = 'system';
+    document.querySelectorAll('.ref-source-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.source === 'system');
+    });
+    document.getElementById('sign-dialog').classList.add('hidden');
+
+    // Reset chat
+    chatHistory = [];
+    const chatMsgs = document.getElementById('chat-messages');
+    if (chatMsgs) chatMsgs.innerHTML = '';
+
+    // Reset painel pré-conversão
+    selectedReferenceName = null;
+    allReferences = [];
+    document.getElementById('ref-selector-list').innerHTML = '';
+    document.getElementById('ref-selected').classList.add('hidden');
+    document.getElementById('ref-selected-name').textContent = '';
+    document.getElementById('ref-search').value = '';
+    document.getElementById('ref-name-pre').value = '';
+    document.getElementById('ref-instructions-pre').value = '';
+    document.getElementById('ref-status-pre').textContent = '';
+    document.getElementById('ref-active-list-pre').classList.add('hidden');
+    clearRefFile('pre');
 
     convertBtn.disabled = false;
     convertBtn.textContent = 'Converter';

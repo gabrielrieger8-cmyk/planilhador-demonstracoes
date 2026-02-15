@@ -54,10 +54,29 @@ MODELOS_DISPONIVEIS: dict[str, dict] = {
         "input_price": 0.10,
         "output_price": 0.40,
     },
+    "gemini-2.5-flash": {
+        "label": "Gemini 2.5 Flash",
+        "input_price": 0.15,
+        "output_price": 3.50,
+    },
     "gemini-3-flash-preview": {
         "label": "Gemini 3 Flash Preview",
         "input_price": 0.15,
         "output_price": 0.60,
+    },
+}
+
+# Modelos para análise de referência (mais caprichados)
+MODELOS_REFERENCIA: dict[str, dict] = {
+    "gemini-2.5-flash": {
+        "label": "Gemini 2.5 Flash",
+        "input_price": 0.15,
+        "output_price": 3.50,
+    },
+    "gemini-2.5-pro": {
+        "label": "Gemini 2.5 Pro",
+        "input_price": 1.25,
+        "output_price": 10.00,
     },
 }
 

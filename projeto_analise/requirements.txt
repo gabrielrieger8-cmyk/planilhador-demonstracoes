@@ -1,9 +1,0 @@
-python-dotenv
-google-genai
-anthropic
-streamlit
-plotly
-markdown2
-xhtml2pdf
-pymupdf
-pytest

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
+from src.exporters.reference_extractor import load_reference_for_prompt
 from src.utils.config import GEMINI_API_KEY, MODELOS_DISPONIVEIS, config, logger
 
 # Quantas páginas enviar por chamada à API
@@ -187,6 +188,7 @@ class GeminiAgent:
         file_path: str | Path,
         prompt: str | None = None,
         financial: bool = True,
+        reference_name: str | None = None,
     ) -> GeminiResult:
         """Processa um PDF enviando-o nativamente ao Gemini.
 
@@ -198,6 +200,7 @@ class GeminiAgent:
             file_path: Caminho para o arquivo PDF.
             prompt: Prompt customizado.
             financial: Se True, usa prompt financeiro especializado.
+            reference_name: Nome da referência a carregar (None = mais recente).
 
         Returns:
             GeminiResult com texto completo extraído.
@@ -230,6 +233,25 @@ class GeminiAgent:
             base_prompt = prompt or (
                 FINANCIAL_PROMPT if financial else GENERAL_PROMPT
             )
+
+            # RAG: injeta referência de padrão contábil validado (se disponível)
+            if financial and prompt is None:
+                ref_text = load_reference_for_prompt(reference_name=reference_name)
+                if ref_text:
+                    base_prompt += (
+                        "\n\nREFERÊNCIA DE XLSX VALIDADO PELO USUÁRIO:\n"
+                        "O texto abaixo mostra o padrão de um balancete JÁ VALIDADO pelo controller.\n"
+                        "Use como guia para:\n"
+                        "1. Classificar corretamente Tipo=A (agrupadora) vs Tipo=D (detalhe)\n"
+                        "2. Entender a hierarquia de contas (quais são filhas de quais)\n"
+                        "3. Manter a mesma estrutura de classificação\n\n"
+                        f"{ref_text}\n\n"
+                        "FIM DA REFERÊNCIA. Agora processe o PDF conforme as instruções acima.\n"
+                    )
+                    logger.info(
+                        "RAG: referência injetada no prompt (%d chars)",
+                        len(ref_text),
+                    )
 
             # Decide se envia tudo de uma vez ou em lotes
             if total_pages <= PAGES_PER_BATCH:

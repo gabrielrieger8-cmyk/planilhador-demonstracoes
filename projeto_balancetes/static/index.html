@@ -13,6 +13,7 @@
             <p class="subtitle" id="subtitle">PDF &rarr; CSV via Gemini 2 Flash</p>
             <div class="model-toggle">
                 <button class="model-btn active" data-model="gemini-2.0-flash" onclick="setModel('gemini-2.0-flash')">Gemini 2 Flash</button>
+                <button class="model-btn" data-model="gemini-2.5-flash" onclick="setModel('gemini-2.5-flash')">Gemini 2.5 Flash</button>
                 <button class="model-btn" data-model="gemini-3-flash-preview" onclick="setModel('gemini-3-flash-preview')">Gemini 3 Flash Preview</button>
             </div>
         </header>
@@ -41,6 +42,89 @@
                 <div class="info-row">
                     <span id="total-info"></span>
                     <span id="cost-estimate"></span>
+                </div>
+            </div>
+
+            <!-- Painel de Referências (pré-conversão) -->
+            <div id="ref-panel-pre" class="ref-panel-section">
+                <div class="ref-panel-header" onclick="toggleRefPanel('pre')">
+                    <span class="ref-panel-icon">📚</span>
+                    <span class="ref-panel-title">Referências de Empresa</span>
+                    <span id="ref-panel-pre-badge" class="ref-panel-badge hidden"></span>
+                    <span class="ref-panel-toggle" id="ref-panel-pre-toggle">&#9660;</span>
+                </div>
+                <div id="ref-panel-pre-body" class="ref-panel-body">
+                    <!-- Seletor de referência existente -->
+                    <div id="ref-selector-area" class="ref-selector-area">
+                        <label class="ref-label">Selecionar referência para conversão</label>
+                        <input type="text" id="ref-search" class="ref-search-input"
+                            placeholder="Buscar referência..." oninput="filterReferences()">
+                        <div id="ref-selector-list" class="ref-selector-list"></div>
+                        <div id="ref-selected" class="ref-selected hidden">
+                            <span id="ref-selected-name"></span>
+                            <button class="btn-ref-clear" onclick="clearSelectedRef()">&times;</button>
+                        </div>
+                        <div id="ref-list-empty" class="ref-list-empty hidden">
+                            Nenhuma referência salva. Crie uma abaixo.
+                        </div>
+                    </div>
+
+                    <hr class="ref-divider">
+
+                    <!-- Criar nova referência (upload only) -->
+                    <div class="ref-create-area">
+                        <label class="ref-label ref-label-create">Criar nova referência</label>
+                        <p class="reference-desc">
+                            Anexe um XLSX com o padrão correto de hierarquia, sinais e tipos.
+                            A IA usará como referência nas próximas conversões.
+                        </p>
+
+                        <div id="ref-upload-area-pre" class="ref-upload-area-visible">
+                            <div class="ref-upload-zone" id="ref-drop-zone-pre" onclick="document.getElementById('ref-file-input-pre').click()">
+                                <span class="ref-upload-icon">📎</span>
+                                <span class="ref-upload-text">Arraste ou clique para anexar XLSX</span>
+                                <input type="file" id="ref-file-input-pre" accept=".xlsx,.xls" hidden>
+                            </div>
+                            <div id="ref-file-name-pre" class="ref-file-name hidden"></div>
+                        </div>
+
+                        <div class="reference-form">
+                            <label for="ref-name-pre" class="ref-label">
+                                Nome da referência <span class="ref-required">*</span>
+                            </label>
+                            <input type="text" id="ref-name-pre" class="ref-name-input"
+                                placeholder="Ex: STV Contabilidade, Grupo VFR, Empresa ABC">
+
+                            <label for="ref-model-pre" class="ref-label">
+                                Modelo de análise
+                            </label>
+                            <select id="ref-model-pre" class="ref-model-select">
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (recomendado)</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro (mais preciso)</option>
+                            </select>
+
+                            <label for="ref-instructions-pre" class="ref-label">
+                                Instruções / Problemas encontrados <span class="ref-optional">(opcional)</span>
+                            </label>
+                            <textarea id="ref-instructions-pre" class="ref-textarea"
+                                placeholder="Descreva problemas encontrados na extração, ex:&#10;- Conta 'DESPESAS GERAIS' foi classificada como D, deveria ser A&#10;- Grupo 3 os sinais estão invertidos"
+                                rows="3"></textarea>
+                        </div>
+
+                        <div class="reference-actions">
+                            <button id="save-ref-btn-pre" class="btn-reference" onclick="saveReferencePre()">
+                                Salvar Referência
+                            </button>
+                            <span id="ref-status-pre" class="reference-status"></span>
+                        </div>
+                    </div>
+
+                    <!-- Lista de referências ativas -->
+                    <div id="ref-active-list-pre" class="ref-active-list hidden">
+                        <hr class="ref-divider">
+                        <h4>Referências Salvas</h4>
+                        <div id="refs-list-pre"></div>
+                    </div>
                 </div>
             </div>
 
@@ -80,6 +164,134 @@
                 <div id="preview-container" class="preview-table-wrapper"></div>
             </div>
 
+            <!-- Excel Profissional -->
+            <div id="xlsx-section" class="hidden">
+                <div class="xlsx-panel">
+                    <h3>Gerar Excel Profissional</h3>
+                    <p class="xlsx-desc">Excel com Tables, formatacao condicional, formulas SUM e numeros formatados.</p>
+
+                    <div class="xlsx-options">
+                        <div class="xlsx-option-row">
+                            <label for="xlsx-sign-mode">Sinais D/C:</label>
+                            <select id="xlsx-sign-mode">
+                                <option value="auto">Auto-detectar</option>
+                                <option value="skip">Manter original</option>
+                            </select>
+                            <span id="sign-detection-info" class="sign-info"></span>
+                        </div>
+                    </div>
+
+                    <button id="xlsx-btn" class="btn-xlsx" onclick="generateXlsx()">
+                        Gerar XLSX Profissional
+                    </button>
+                    <div id="xlsx-result" class="hidden"></div>
+                </div>
+            </div>
+
+            <!-- Referência / RAG (pós-conversão) -->
+            <div id="reference-section" class="hidden">
+                <div class="reference-panel">
+                    <div class="ref-panel-header" onclick="toggleRefPanel('post')">
+                        <span class="ref-panel-icon">📚</span>
+                        <span class="ref-panel-title">Referências de Empresa</span>
+                        <span id="ref-panel-post-badge" class="ref-panel-badge hidden"></span>
+                        <span class="ref-panel-toggle" id="ref-panel-post-toggle">&#9660;</span>
+                    </div>
+                    <div id="ref-panel-post-body" class="ref-panel-body">
+                        <p class="reference-desc">
+                            Salve uma referência para que a IA aprenda o padrão de hierarquia,
+                            sinais e tipos das contas.
+                        </p>
+
+                        <div class="ref-source-toggle">
+                            <button class="ref-source-btn active" data-source="system" onclick="setRefSource('system')">
+                                Usar XLSX gerado
+                            </button>
+                            <button class="ref-source-btn" data-source="upload" onclick="setRefSource('upload')">
+                                Anexar XLSX corrigido
+                            </button>
+                        </div>
+
+                        <div id="ref-upload-area-post" class="hidden">
+                            <div class="ref-upload-zone" id="ref-drop-zone-post" onclick="document.getElementById('ref-file-input-post').click()">
+                                <span class="ref-upload-icon">📎</span>
+                                <span class="ref-upload-text">Arraste ou clique para anexar o XLSX corrigido</span>
+                                <input type="file" id="ref-file-input-post" accept=".xlsx,.xls" hidden>
+                            </div>
+                            <div id="ref-file-name-post" class="ref-file-name hidden"></div>
+                        </div>
+
+                        <div class="reference-form">
+                            <label for="ref-name-post" class="ref-label">
+                                Nome da referência <span class="ref-required">*</span>
+                            </label>
+                            <input type="text" id="ref-name-post" class="ref-name-input"
+                                placeholder="Ex: STV Contabilidade, Grupo VFR, Empresa ABC">
+
+                            <label for="ref-model-post" class="ref-label">
+                                Modelo de análise
+                            </label>
+                            <select id="ref-model-post" class="ref-model-select">
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash (recomendado)</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro (mais preciso)</option>
+                            </select>
+
+                            <label for="ref-instructions-post" class="ref-label">
+                                Instruções / Problemas encontrados <span class="ref-optional">(opcional)</span>
+                            </label>
+                            <textarea id="ref-instructions-post" class="ref-textarea"
+                                placeholder="Descreva problemas encontrados na extração, ex:&#10;- Conta 'DESPESAS GERAIS' foi classificada como D, deveria ser A&#10;- Grupo 3 os sinais estão invertidos&#10;- A conta 01.2.03 não existe, foi inventada pela IA&#10;- Faltou a conta 'IMPOSTOS A RECUPERAR' no grupo 1.1"
+                                rows="4"></textarea>
+                        </div>
+
+                        <div class="reference-actions">
+                            <button id="save-ref-btn-post" class="btn-reference" onclick="saveReferencePost()">
+                                Salvar como Referência
+                            </button>
+                            <span id="ref-status-post" class="reference-status"></span>
+                        </div>
+                        <div id="ref-info-post" class="hidden">
+                            <div id="ref-details-post"></div>
+                        </div>
+
+                        <hr class="ref-divider">
+
+                        <!-- Seletor de referência -->
+                        <div class="ref-selector-area">
+                            <label class="ref-label">Referência selecionada</label>
+                            <div id="ref-selected-post" class="ref-selected hidden">
+                                <span id="ref-selected-name-post"></span>
+                                <button class="btn-ref-clear" onclick="clearSelectedRef()">&times;</button>
+                            </div>
+                            <div id="ref-no-selection-post" class="ref-list-empty">
+                                Nenhuma referência selecionada
+                            </div>
+                        </div>
+
+                        <div id="ref-active-list-post" class="ref-active-list hidden">
+                            <h4>Referências Salvas</h4>
+                            <div id="refs-list-post"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Correcao / Resubmissao -->
+            <div id="correction-section" class="hidden">
+                <div class="correction-panel">
+                    <h3>Corrigir Extracao</h3>
+                    <p class="correction-desc">Descreva o erro e reenvie ao Gemini para gerar nova versao.</p>
+                    <div class="correction-form">
+                        <select id="correction-file">
+                            <option value="">Selecione o arquivo...</option>
+                        </select>
+                        <textarea id="correction-text" placeholder="Ex: A conta 1.1.01 esta com saldo errado. O correto e 150.000,00D." rows="3"></textarea>
+                        <button class="btn-correction" onclick="submitCorrection()">Reenviar com Correcao</button>
+                    </div>
+                    <div id="correction-status" class="hidden"></div>
+                </div>
+            </div>
+
             <div id="results-list"></div>
             <button id="download-all-btn" class="btn-primary" onclick="downloadAll()">
                 Baixar Todos (ZIP)
@@ -87,6 +299,61 @@
             <button class="btn-secondary" onclick="resetApp()">
                 Nova Conversao
             </button>
+        </div>
+
+        <!-- Chat de Referências -->
+        <div id="chat-section" class="chat-section">
+            <div class="chat-panel">
+                <div class="chat-header" onclick="toggleChatPanel()">
+                    <span class="chat-icon">💬</span>
+                    <span class="chat-title">Chat — Atualizar Referências via IA</span>
+                    <span class="chat-toggle" id="chat-toggle">&#9660;</span>
+                </div>
+                <div id="chat-body" class="chat-body collapsed">
+                    <p class="chat-desc">
+                        Converse com a IA para ajustar referências existentes.
+                        Ex: "Inverta os sinais do grupo 3" ou "A conta DESPESAS GERAIS deveria ser agrupadora".
+                    </p>
+
+                    <div class="chat-ref-selector">
+                        <label for="chat-ref-select" class="ref-label">Referência a editar</label>
+                        <select id="chat-ref-select" class="ref-model-select">
+                            <option value="">Selecione uma referência...</option>
+                        </select>
+                    </div>
+
+                    <div class="chat-model-selector">
+                        <label for="chat-model-select" class="ref-label">Modelo</label>
+                        <select id="chat-model-select" class="ref-model-select">
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        </select>
+                    </div>
+
+                    <div id="chat-messages" class="chat-messages"></div>
+
+                    <div class="chat-input-area">
+                        <textarea id="chat-input" class="chat-input"
+                            placeholder="Digite sua instrução para ajustar a referência..."
+                            rows="2" onkeydown="chatKeyHandler(event)"></textarea>
+                        <button id="chat-send-btn" class="btn-chat-send" onclick="sendChatMessage()">
+                            Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sign Detection Dialog -->
+        <div id="sign-dialog" class="modal hidden">
+            <div class="modal-content">
+                <h3>Sinais D/C nos Dados</h3>
+                <p id="sign-dialog-message"></p>
+                <div class="modal-actions">
+                    <button class="btn-primary" onclick="signDialogConfirm('auto')">Usar Convencao Padrao</button>
+                    <button class="btn-secondary" onclick="signDialogConfirm('skip')">Manter Original</button>
+                </div>
+            </div>
         </div>
     </div>
 

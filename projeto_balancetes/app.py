@@ -19,10 +19,18 @@ from typing import Any
 
 import fitz  # PyMuPDF — para contar paginas
 import uvicorn
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from src.exporters.sign_logic import SignConfig, SignDetectionResult
+from src.exporters.xlsx_builder import BalanceteXlsxBuilder, build_xlsx, detect_periodo
+from src.exporters.reference_extractor import (
+    extract_reference_from_xlsx,
+    list_references,
+    load_reference_for_prompt,
+    save_reference,
+)
 from src.orchestrator import Orchestrator, OutputFormat
 from src.utils.config import MODELOS_DISPONIVEIS, config, logger
 
@@ -160,8 +168,14 @@ async def upload(files: list[UploadFile]):
 
 
 @app.post("/convert/{job_id}")
-async def convert(job_id: str, workers: int = 3):
-    """Inicia conversao em background."""
+async def convert(job_id: str, workers: int = 3, reference: str | None = None):
+    """Inicia conversao em background.
+
+    Args:
+        job_id: ID do job.
+        workers: Número de workers paralelos.
+        reference: Nome (filename stem) da referência a usar. Se None, usa a mais recente.
+    """
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(404, "Job nao encontrado.")
@@ -178,12 +192,15 @@ async def convert(job_id: str, workers: int = 3):
         JobProgress(filename=fi.name, pages=fi.pages) for fi in job.files
     ]
 
+    if reference:
+        logger.info("Conversão com referência selecionada: %s", reference)
+
     # Roda em background
     asyncio.get_event_loop().run_in_executor(
-        None, _run_conversion, job, workers
+        None, _run_conversion, job, workers, reference
     )
 
-    return {"status": "started", "workers": workers}
+    return {"status": "started", "workers": workers, "reference": reference}
 
 
 @app.get("/progress/{job_id}")
@@ -349,6 +366,498 @@ async def remove_file(job_id: str, filename: str):
 
 
 # ---------------------------------------------------------------------------
+# Excel Profissional — endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/convert-xlsx/{job_id}")
+async def convert_xlsx(job_id: str, body: dict | None = None):
+    """Gera XLSX profissional consolidado (todas as abas em um único arquivo).
+
+    Body (opcional):
+        sign_mode: str — "auto", "skip", ou "ask" (padrão: "auto")
+        existing_xlsx: str — nome de XLSX existente no output_dir para adicionar abas
+        version: int — versão (1=original, 2+=resubmissão)
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado.")
+
+    if not job.preview_data:
+        raise HTTPException(400, "Nenhum dado convertido disponível. Execute /convert primeiro.")
+
+    body = body or {}
+    sign_mode = body.get("sign_mode", "auto")
+    existing_xlsx_name = body.get("existing_xlsx")
+    version = body.get("version", 1)
+
+    sign_config = SignConfig(mode=sign_mode)
+
+    # Arquivo único consolidado
+    output_xlsx = job.output_dir / "Balancetes_Profissional.xlsx"
+
+    # Se há XLSX existente para adicionar abas, usa ele como base
+    existing_wb = None
+    if existing_xlsx_name and job.output_dir:
+        candidate = job.output_dir / existing_xlsx_name
+        if candidate.exists():
+            output_xlsx = candidate
+            existing_wb = candidate
+
+    tabs_info = []
+
+    # Ordena por período para abas ficarem em ordem cronológica
+    items = sorted(
+        job.preview_data.items(),
+        key=lambda x: detect_periodo(x[0]),
+    )
+
+    for base_name, unified_rows in items:
+        if not unified_rows or len(unified_rows) < 2:
+            continue
+
+        periodo = detect_periodo(base_name)
+
+        hdr = unified_rows[0] if unified_rows else []
+        has_nat = any("natureza" in h.lower() for h in hdr)
+        logger.info("[XLSX-SIGN] %s: %d cols, has_nat=%s", base_name, len(hdr), has_nat)
+
+        try:
+            builder = BalanceteXlsxBuilder(
+                unified_rows=unified_rows,
+                periodo=periodo,
+                filename=base_name,
+                sign_config=sign_config,
+            )
+
+            sign_result = builder.detect_signs()
+            logger.info(
+                "[XLSX-SIGN] %s: has_dc=%s, matches=%s, mode=%s",
+                base_name, sign_result.has_dc, sign_result.matches_convention,
+                sign_config.mode,
+            )
+
+            # Aplica sinais
+            if sign_config.mode != "skip":
+                builder.apply_signs(sign_config)
+                # Verifica resultado
+                neg_count = sum(1 for r in builder._rows if isinstance(r[3], (int, float)) and r[3] < 0)
+                logger.info("[XLSX-SIGN] %s: APOS apply -> %d valores negativos em SA", base_name, neg_count)
+            elif sign_config is None and sign_result.has_dc and sign_result.matches_convention:
+                builder.apply_signs(SignConfig(mode="auto"))
+
+            # Build — cada iteração adiciona uma aba ao mesmo workbook
+            result_path = builder.build(
+                output_path=output_xlsx,
+                existing_workbook=output_xlsx if output_xlsx.exists() else existing_wb,
+                version=version,
+            )
+
+            tabs_info.append({
+                "periodo": periodo,
+                "sign_detection": {
+                    "has_dc": sign_result.has_dc,
+                    "has_signs": sign_result.has_signs,
+                    "matches_convention": sign_result.matches_convention,
+                    "needs_user_input": sign_result.needs_user_input,
+                    "details": sign_result.details,
+                },
+            })
+        except Exception as exc:
+            logger.error("Erro ao gerar aba XLSX para %s: %s", base_name, exc)
+            tabs_info.append({
+                "periodo": periodo,
+                "error": str(exc),
+            })
+
+    return {
+        "files": [{
+            "filename": output_xlsx.name,
+            "periodos": [t["periodo"] for t in tabs_info if "error" not in t],
+            "tabs_count": len([t for t in tabs_info if "error" not in t]),
+            "sign_detection": tabs_info[0].get("sign_detection", {}) if tabs_info else {},
+        }],
+        "tabs": tabs_info,
+    }
+
+
+@app.post("/detect-signs/{job_id}/{base_name}")
+async def detect_signs(job_id: str, base_name: str):
+    """Detecta modo de sinais D/C nos dados de um arquivo."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado.")
+
+    unified_rows = job.preview_data.get(base_name)
+    if not unified_rows or len(unified_rows) < 2:
+        raise HTTPException(404, f"Dados não encontrados para '{base_name}'.")
+
+    try:
+        builder = BalanceteXlsxBuilder(unified_rows, filename=base_name)
+        result = builder.detect_signs()
+        return {
+            "has_dc": result.has_dc,
+            "has_signs": result.has_signs,
+            "matches_convention": result.matches_convention,
+            "needs_user_input": result.needs_user_input,
+            "details": result.details,
+        }
+    except Exception as exc:
+        raise HTTPException(500, str(exc))
+
+
+@app.post("/upload-xlsx")
+async def upload_xlsx(file: UploadFile, job_id: str | None = None):
+    """Upload de XLSX existente para adicionar abas.
+
+    Se job_id fornecido, salva no output_dir do job.
+    Retorna info sobre as abas existentes.
+    """
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(400, "Envie um arquivo .xlsx.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Arquivo vazio.")
+
+    # Salva no output_dir do job ou em temp
+    if job_id:
+        job = jobs.get(job_id)
+        if not job or not job.output_dir:
+            raise HTTPException(404, "Job nao encontrado.")
+        dest = job.output_dir / file.filename
+    else:
+        tmp_dir = Path(tempfile.mkdtemp(prefix="xlsx_"))
+        dest = tmp_dir / file.filename
+
+    dest.write_bytes(content)
+
+    # Lê info das abas
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(str(dest), read_only=True)
+        sheets = wb.sheetnames
+        wb.close()
+    except Exception as exc:
+        raise HTTPException(400, f"Erro ao ler XLSX: {exc}")
+
+    return {
+        "filename": file.filename,
+        "path": str(dest),
+        "sheets": sheets,
+    }
+
+
+@app.post("/resubmit/{job_id}/{base_name}")
+async def resubmit(job_id: str, base_name: str, body: dict):
+    """Reenvia PDF com prompt de correção ao Gemini.
+
+    Body:
+        correction: str — instrução de correção (ex: "A conta 1.1.01 está errada...")
+        version: int — próxima versão (default: 2)
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado.")
+
+    correction = body.get("correction", "")
+    if not correction:
+        raise HTTPException(400, "Campo 'correction' é obrigatório.")
+
+    version = body.get("version", 2)
+
+    # Encontra o PDF original
+    pdf_file = None
+    for fi in job.files:
+        stem = fi.name.rsplit(".", 1)[0]
+        if stem == base_name:
+            pdf_file = fi
+            break
+
+    if not pdf_file:
+        raise HTTPException(404, f"PDF original '{base_name}' não encontrado.")
+
+    # Monta prompt com correção
+    correction_prompt = (
+        f"ATENÇÃO — CORREÇÃO SOLICITADA PELO USUÁRIO:\n"
+        f"{correction}\n\n"
+        f"Reprocesse o PDF aplicando a correção acima. "
+        f"Mantenha todas as outras contas como estavam."
+    )
+
+    # Processa novamente em background
+    import threading
+
+    def _resubmit_worker():
+        try:
+            orch = Orchestrator()
+            # Injeta correction no prompt
+            agent = orch._gemini_agent
+            result = agent.process(
+                str(pdf_file.path),
+                prompt=correction_prompt,
+                financial=True,
+            )
+
+            if result.success and result.text:
+                from src.parsers.csv_parser import save_as_csv
+                csv_paths, unified_rows = save_as_csv(
+                    result.text,
+                    f"{base_name}_v{version}",
+                    output_dir=job.output_dir,
+                )
+                # Guarda dados para /convert-xlsx
+                job.preview_data[f"{base_name}_v{version}"] = unified_rows
+                logger.info("Resubmissão v%d concluída: %s", version, base_name)
+            else:
+                logger.error("Resubmissão falhou: %s", result.error)
+
+        except Exception as exc:
+            logger.error("Erro na resubmissão: %s", exc)
+
+    thread = threading.Thread(target=_resubmit_worker, daemon=True)
+    thread.start()
+
+    return {
+        "status": "resubmitting",
+        "version": version,
+        "base_name": base_name,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Referência / RAG — endpoints
+# ---------------------------------------------------------------------------
+
+@app.post("/save-reference/{job_id}")
+async def save_reference_endpoint(job_id: str, body: dict | None = None):
+    """Extrai padrão do XLSX validado e salva como referência para o Gemini.
+
+    O XLSX Profissional já deve ter sido gerado com sinais aplicados.
+    O sistema extrai:
+    - Hierarquia de agrupadoras (qual soma quais filhos)
+    - Convenção de sinais por grupo
+    - Plano de contas com tipos A/D
+
+    Body (opcional):
+        sheet_name: str — nome da aba específica (default: primeira)
+        instructions: str — instruções/problemas encontrados pelo usuário
+    """
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job nao encontrado.")
+
+    if not job.output_dir:
+        raise HTTPException(400, "Nenhum output disponível.")
+
+    # Localiza o XLSX profissional
+    xlsx_path = job.output_dir / "Balancetes_Profissional.xlsx"
+    if not xlsx_path.exists():
+        # Procura qualquer XLSX
+        xlsx_files = list(job.output_dir.glob("*.xlsx"))
+        if not xlsx_files:
+            raise HTTPException(400, "Nenhum XLSX encontrado. Gere o XLSX Profissional primeiro.")
+        xlsx_path = xlsx_files[0]
+
+    body = body or {}
+    sheet_name = body.get("sheet_name")
+    instructions = body.get("instructions", "").strip()
+    ref_name = body.get("name", "").strip()
+
+    try:
+        ref = extract_reference_from_xlsx(xlsx_path, sheet_name=sheet_name)
+        txt_path, json_path = save_reference(
+            ref, user_instructions=instructions, name=ref_name,
+        )
+
+        return {
+            "status": "ok",
+            "display_name": ref_name or ref.empresa,
+            "empresa": ref.empresa,
+            "periodo": ref.periodo,
+            "total_contas": ref.total_contas,
+            "grupos": len(ref.grupos),
+            "hierarchy_nodes": len(ref.hierarchy_tree),
+            "sign_examples": len(ref.sign_examples),
+            "has_instructions": bool(instructions),
+            "txt_file": txt_path.name,
+            "json_file": json_path.name,
+            "preview": ref.to_prompt_text()[:2000],
+        }
+    except Exception as exc:
+        logger.error("Erro ao salvar referência: %s", exc)
+        raise HTTPException(500, f"Erro ao extrair referência: {exc}")
+
+
+@app.post("/upload-reference")
+async def upload_reference_endpoint(
+    file: UploadFile,
+    instructions: str = Form(""),
+    name: str = Form(""),
+    model: str = Form(""),
+):
+    """Recebe XLSX corrigido pelo controller e extrai referência.
+
+    O controller pode anexar seu próprio XLSX (corrigido manualmente)
+    para que a IA aprenda o padrão correto.
+
+    Form fields:
+        file: UploadFile — XLSX corrigido
+        instructions: str — instruções/problemas encontrados
+        name: str — nome customizado da referência
+    """
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Apenas arquivos .xlsx são aceitos.")
+
+    # Salva o XLSX em diretório temporário
+    import tempfile
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="ref_"))
+    tmp_path = tmp_dir / file.filename
+    content = await file.read()
+    tmp_path.write_bytes(content)
+
+    ref_name = name.strip()
+    ref_model = model.strip() if model else ""
+    if ref_model:
+        logger.info("Referência upload com modelo de análise: %s", ref_model)
+
+    try:
+        ref = extract_reference_from_xlsx(tmp_path)
+        txt_path, json_path = save_reference(
+            ref, user_instructions=instructions.strip(), name=ref_name,
+        )
+
+        return {
+            "status": "ok",
+            "source": "upload",
+            "filename": file.filename,
+            "display_name": ref_name or ref.empresa,
+            "empresa": ref.empresa,
+            "periodo": ref.periodo,
+            "total_contas": ref.total_contas,
+            "grupos": len(ref.grupos),
+            "hierarchy_nodes": len(ref.hierarchy_tree),
+            "sign_examples": len(ref.sign_examples),
+            "has_instructions": bool(instructions.strip()),
+            "txt_file": txt_path.name,
+            "json_file": json_path.name,
+            "preview": ref.to_prompt_text()[:2000],
+        }
+    except Exception as exc:
+        logger.error("Erro ao processar XLSX de referência: %s", exc)
+        raise HTTPException(500, f"Erro ao extrair referência: {exc}")
+    finally:
+        # Limpa temporário
+        tmp_path.unlink(missing_ok=True)
+        tmp_dir.rmdir()
+
+
+@app.get("/references")
+async def get_references():
+    """Lista referências disponíveis no knowledge/."""
+    refs = list_references()
+    has_active = load_reference_for_prompt() is not None
+    return {
+        "references": refs,
+        "has_active": has_active,
+    }
+
+
+@app.delete("/references/{filename}")
+async def delete_reference(filename: str):
+    """Remove uma referência do knowledge/."""
+    from src.exporters.reference_extractor import KNOWLEDGE_DIR
+
+    for ext in (".txt", ".json"):
+        fpath = KNOWLEDGE_DIR / f"{filename}{ext}"
+        if fpath.exists():
+            fpath.unlink()
+
+    return {"status": "ok", "removed": filename}
+
+
+# ---------------------------------------------------------------------------
+# Chat — atualizar referências via IA
+# ---------------------------------------------------------------------------
+
+@app.post("/chat-reference")
+async def chat_reference(body: dict):
+    """Chat com IA para ajustar referências existentes.
+
+    Body:
+        reference_name: str — filename stem da referência
+        message: str — instrução do usuário
+        model: str — modelo a usar (default: gemini-2.5-flash)
+        history: list — histórico [{role, content}, ...]
+    """
+    ref_name = body.get("reference_name", "")
+    message = body.get("message", "").strip()
+    model_id = body.get("model", "gemini-2.5-flash")
+    history = body.get("history", [])
+
+    if not ref_name:
+        raise HTTPException(400, "Selecione uma referência.")
+    if not message:
+        raise HTTPException(400, "Digite uma mensagem.")
+
+    # Carrega referência atual
+    ref_text = load_reference_for_prompt(reference_name=ref_name)
+    if not ref_text:
+        raise HTTPException(404, f"Referência '{ref_name}' não encontrada.")
+
+    # Monta prompt de contexto
+    system_prompt = (
+        "Você é um assistente especializado em contabilidade brasileira. "
+        "O usuário tem uma referência de balancete (plano de contas, hierarquia, sinais D/C). "
+        "Sua tarefa é ajudar a ajustar essa referência com base nas instruções do usuário.\n\n"
+        "REFERÊNCIA ATUAL:\n"
+        f"{ref_text}\n\n"
+        "INSTRUÇÕES:\n"
+        "- Analise a referência acima e responda a pergunta/instrução do usuário.\n"
+        "- Se o usuário pedir uma alteração, descreva EXATAMENTE o que deve mudar.\n"
+        "- Se precisar atualizar a referência, responda com a seção modificada.\n"
+        "- Responda em português.\n"
+    )
+
+    # Monta conversa
+    conversation_parts = [system_prompt]
+    for msg in history[:-1]:  # todas exceto a última (que é a mensagem atual)
+        role_label = "Usuário" if msg.get("role") == "user" else "Assistente"
+        conversation_parts.append(f"{role_label}: {msg.get('content', '')}")
+    conversation_parts.append(f"Usuário: {message}")
+
+    full_prompt = "\n\n".join(conversation_parts)
+
+    try:
+        from google import genai
+        from src.utils.config import GEMINI_API_KEY
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model=model_id,
+            contents=[full_prompt],
+            config={
+                "temperature": 0.3,
+                "max_output_tokens": 8192,
+            },
+        )
+
+        ai_response = response.text or "Sem resposta."
+
+        # TODO: futuramente, parsear a resposta e atualizar os arquivos .txt/.json
+        # Por enquanto, o chat é apenas consultivo
+        return {
+            "response": ai_response,
+            "updated": False,
+            "model": model_id,
+        }
+
+    except Exception as exc:
+        logger.error("Erro no chat de referência: %s", exc)
+        raise HTTPException(500, f"Erro na comunicação com IA: {exc}")
+
+
+# ---------------------------------------------------------------------------
 # Modelo
 # ---------------------------------------------------------------------------
 
@@ -379,9 +888,9 @@ async def set_model(body: dict):
 # Conversao em background
 # ---------------------------------------------------------------------------
 
-def _run_conversion(job: Job, max_workers: int) -> None:
+def _run_conversion(job: Job, max_workers: int, reference_name: str | None = None) -> None:
     """Executa a conversao de PDFs em threads paralelas."""
-    logger.info("Iniciando conversao: %d PDFs, %d workers", job.total, max_workers)
+    logger.info("Iniciando conversao: %d PDFs, %d workers, ref=%s", job.total, max_workers, reference_name)
 
     def _process_one(idx: int, fi: FileInfo) -> tuple[int, dict[str, Any]]:
         """Worker: processa um PDF usando Orchestrator."""
@@ -409,6 +918,7 @@ def _run_conversion(job: Job, max_workers: int) -> None:
                 file_path,
                 output_format=OutputFormat.CSV,
                 output_dir=job.output_dir,
+                reference_name=reference_name,
             )
             elapsed = time.time() - start
 

@@ -99,8 +99,11 @@ class Orchestrator:
             doc.close()
 
             # Envia direto ao Gemini
-            logger.info("[1/2] Enviando ao Gemini (%d páginas)...", total_pages)
-            result: GeminiResult = self._gemini_agent.process(path, financial=True)
+            reference_name = kwargs.get("reference_name")
+            logger.info("[1/2] Enviando ao Gemini (%d páginas)... ref=%s", total_pages, reference_name)
+            result: GeminiResult = self._gemini_agent.process(
+                path, financial=True, reference_name=reference_name,
+            )
 
             if not result.success:
                 return ProcessingResult(
