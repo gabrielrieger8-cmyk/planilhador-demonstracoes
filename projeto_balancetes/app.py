@@ -377,6 +377,8 @@ async def convert_xlsx(job_id: str, body: dict | None = None):
         sign_mode: str — "auto", "skip", ou "ask" (padrão: "auto")
         existing_xlsx: str — nome de XLSX existente no output_dir para adicionar abas
         version: int — versão (1=original, 2+=resubmissão)
+        detail_level: str — "completo", "agrupadoras" ou "personalizado" (padrão: "completo")
+        collapsed_classifs: list[str] — classificações a colapsar (modo personalizado)
     """
     job = jobs.get(job_id)
     if not job:
@@ -389,6 +391,8 @@ async def convert_xlsx(job_id: str, body: dict | None = None):
     sign_mode = body.get("sign_mode", "auto")
     existing_xlsx_name = body.get("existing_xlsx")
     version = body.get("version", 1)
+    detail_level = body.get("detail_level", "completo")
+    collapsed_classifs = body.get("collapsed_classifs", [])
 
     sign_config = SignConfig(mode=sign_mode)
 
@@ -444,6 +448,13 @@ async def convert_xlsx(job_id: str, body: dict | None = None):
                 logger.info("[XLSX-SIGN] %s: APOS apply -> %d valores negativos em SA", base_name, neg_count)
             elif sign_config is None and sign_result.has_dc and sign_result.matches_convention:
                 builder.apply_signs(SignConfig(mode="auto"))
+
+            # Filtra por nível de detalhe
+            if detail_level != "completo":
+                builder.filter_rows(
+                    detail_level=detail_level,
+                    collapsed_classifs=collapsed_classifs or None,
+                )
 
             # Build — cada iteração adiciona uma aba ao mesmo workbook
             result_path = builder.build(

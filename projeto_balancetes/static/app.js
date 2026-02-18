@@ -537,6 +537,94 @@ function showXlsxSection(previewData) {
     }
 }
 
+function onDetailLevelChange() {
+    const level = document.getElementById('xlsx-detail-level').value;
+    const customPanel = document.getElementById('xlsx-custom-detail');
+
+    if (level === 'personalizado') {
+        customPanel.classList.remove('hidden');
+        buildAgrupadouraTree();
+    } else {
+        customPanel.classList.add('hidden');
+    }
+}
+
+function buildAgrupadouraTree() {
+    const container = document.getElementById('xlsx-custom-tree');
+    if (!currentPreviewData) {
+        container.innerHTML = '<span style="color:#999">Nenhum dado disponivel.</span>';
+        return;
+    }
+
+    const keys = Object.keys(currentPreviewData);
+    if (keys.length === 0) {
+        container.innerHTML = '<span style="color:#999">Nenhuma agrupadora encontrada.</span>';
+        return;
+    }
+
+    // Usa o primeiro dataset (ou unico)
+    const rows = currentPreviewData[keys[0]];
+    if (!rows || rows.length < 2) {
+        container.innerHTML = '<span style="color:#999">Sem dados.</span>';
+        return;
+    }
+
+    // Encontra indices das colunas no header
+    const header = rows[0].map(h => h.toLowerCase().trim());
+    let tipoIdx = header.findIndex(h => h === 'tipo');
+    let classifIdx = header.findIndex(h => h.includes('classifica'));
+    let descIdx = header.findIndex(h => h.includes('descri'));
+
+    if (tipoIdx < 0 || classifIdx < 0) {
+        container.innerHTML = '<span style="color:#999">Colunas Tipo/Classificacao nao encontradas.</span>';
+        return;
+    }
+
+    // Extrai agrupadoras nivel 0 e 1 (max 1 ponto na classificacao)
+    const tree = [];
+    for (let i = 1; i < rows.length; i++) {
+        const r = rows[i];
+        const tipo = (r[tipoIdx] || '').toString().trim().toUpperCase();
+        if (tipo !== 'A') continue;
+
+        const classif = (r[classifIdx] || '').toString().trim();
+        const desc = descIdx >= 0 ? (r[descIdx] || '').toString().trim() : '';
+        const depth = (classif.match(/\./g) || []).length;
+
+        if (depth > 1) continue;  // so nivel 0 e 1
+
+        tree.push({ classif, desc, depth });
+    }
+
+    if (tree.length === 0) {
+        container.innerHTML = '<span style="color:#999">Nenhuma agrupadora encontrada.</span>';
+        return;
+    }
+
+    let html = '';
+    tree.forEach(node => {
+        const indent = node.depth > 0 ? ' tree-indent' : '';
+        html += `<label class="tree-item${indent}">
+            <input type="checkbox" class="tree-checkbox" value="${node.classif}" checked>
+            <span class="tree-classif">${node.classif}</span>
+            <span class="tree-desc">${node.desc}</span>
+        </label>`;
+    });
+    container.innerHTML = html;
+}
+
+function toggleAllTree(expand) {
+    document.querySelectorAll('.tree-checkbox').forEach(cb => { cb.checked = expand; });
+}
+
+function getCollapsedClassifs() {
+    const collapsed = [];
+    document.querySelectorAll('.tree-checkbox').forEach(cb => {
+        if (!cb.checked) collapsed.push(cb.value);
+    });
+    return collapsed;
+}
+
 async function detectSigns(baseName) {
     const infoEl = document.getElementById('sign-detection-info');
     infoEl.textContent = 'Analisando...';
@@ -586,10 +674,16 @@ async function generateXlsx() {
     resultDiv.classList.add('hidden');
 
     try {
+        const detailLevel = document.getElementById('xlsx-detail-level').value;
+        const payload = { sign_mode: signMode, detail_level: detailLevel };
+        if (detailLevel === 'personalizado') {
+            payload.collapsed_classifs = getCollapsedClassifs();
+        }
+
         const resp = await fetch(`/convert-xlsx/${jobId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sign_mode: signMode }),
+            body: JSON.stringify(payload),
         });
 
         if (!resp.ok) {
@@ -1416,6 +1510,8 @@ function resetApp() {
     document.getElementById('preview-container').innerHTML = '';
     document.getElementById('xlsx-section').classList.add('hidden');
     document.getElementById('xlsx-result').classList.add('hidden');
+    document.getElementById('xlsx-detail-level').value = 'completo';
+    document.getElementById('xlsx-custom-detail').classList.add('hidden');
     document.getElementById('correction-section').classList.add('hidden');
     document.getElementById('correction-status').classList.add('hidden');
     document.getElementById('correction-text').value = '';

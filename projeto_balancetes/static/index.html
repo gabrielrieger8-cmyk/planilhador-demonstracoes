@@ -179,6 +179,23 @@
                             </select>
                             <span id="sign-detection-info" class="sign-info"></span>
                         </div>
+                        <div class="xlsx-option-row">
+                            <label for="xlsx-detail-level">Nivel de detalhe:</label>
+                            <select id="xlsx-detail-level" onchange="onDetailLevelChange()">
+                                <option value="completo">Completo (todas as linhas)</option>
+                                <option value="agrupadoras">Somente Agrupadoras</option>
+                                <option value="personalizado">Personalizado</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="xlsx-custom-detail" class="xlsx-custom-detail hidden">
+                        <p class="xlsx-custom-desc">Selecione quais grupos deseja expandir (mostrar detalhes). Grupos desmarcados mostrarao apenas a conta totalizadora.</p>
+                        <div class="xlsx-custom-controls">
+                            <button type="button" class="btn-tree-action" onclick="toggleAllTree(true)">Marcar todos</button>
+                            <button type="button" class="btn-tree-action" onclick="toggleAllTree(false)">Desmarcar todos</button>
+                        </div>
+                        <div id="xlsx-custom-tree" class="xlsx-custom-tree"></div>
                     </div>
 
                     <button id="xlsx-btn" class="btn-xlsx" onclick="generateXlsx()">

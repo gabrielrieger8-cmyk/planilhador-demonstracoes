@@ -373,6 +373,10 @@ class BalanceteXlsxBuilder:
             mapped = _map_row(raw_row, self._csv_layout)
             self._rows.append(mapped)
 
+        # Controle de filtragem por nível de detalhe
+        self._force_values: bool = False        # True → agrupadoras usam valor direto
+        self._collapsed_parents: set[int] = set()  # Row indices de pais colapsados
+
         logger.info(
             "XlsxBuilder: %d linhas, período=%s",
             len(self._rows), self._periodo,
@@ -423,6 +427,60 @@ class BalanceteXlsxBuilder:
                     self._rows[i][COL_IDX_NAT_SA] = str_row[COL_IDX_NAT_SA]
                 if COL_IDX_NAT_SAT < len(str_row):
                     self._rows[i][COL_IDX_NAT_SAT] = str_row[COL_IDX_NAT_SAT]
+
+    def filter_rows(
+        self,
+        detail_level: str = "completo",
+        collapsed_classifs: list[str] | None = None,
+    ) -> None:
+        """Filtra linhas conforme nível de detalhe.
+
+        Args:
+            detail_level: "completo", "agrupadoras" ou "personalizado".
+            collapsed_classifs: Classificações a colapsar (modo personalizado).
+        """
+        if detail_level == "completo":
+            return
+
+        if detail_level == "agrupadoras":
+            self._rows = [
+                row for row in self._rows
+                if COL_IDX_TIPO < len(row)
+                and str(row[COL_IDX_TIPO]).strip().upper() == "A"
+            ]
+            self._force_values = True
+            logger.info("Filtro agrupadoras: %d linhas mantidas", len(self._rows))
+            return
+
+        if detail_level == "personalizado" and collapsed_classifs:
+            collapsed_set = set(collapsed_classifs)
+            rows_to_keep: list[list] = []
+            self._collapsed_parents = set()
+
+            for row in self._rows:
+                classif = str(row[1]).strip() if len(row) > 1 else ""
+
+                # Verifica se é descendente de alguma classificação colapsada
+                is_descendant = any(
+                    classif.startswith(c + ".") for c in collapsed_set
+                    if classif != c  # não remover a própria agrupadora
+                )
+
+                if is_descendant:
+                    continue
+
+                # Se é uma das agrupadoras colapsadas, marca para usar valor direto
+                if classif in collapsed_set:
+                    self._collapsed_parents.add(len(rows_to_keep))
+
+                rows_to_keep.append(row)
+
+            removed = len(self._rows) - len(rows_to_keep)
+            self._rows = rows_to_keep
+            logger.info(
+                "Filtro personalizado: %d linhas removidas, %d mantidas",
+                removed, len(rows_to_keep),
+            )
 
     def build(
         self,
@@ -525,8 +583,13 @@ class BalanceteXlsxBuilder:
             cell.border = THIN_BORDER
 
     def _write_data(self, ws, hierarchy: dict[int, list[int]]) -> None:
-        """Escreve dados com formatação e fórmulas SUM."""
-        tipo_col_letter = get_column_letter(COL_IDX_TIPO + 1)  # J
+        """Escreve dados com formatação e fórmulas SUM.
+
+        Para agrupadoras com filhos, valida se |SUM(filhos)| ≈ |valor original|
+        antes de colocar fórmula. Se não bate, mantém o valor do PDF (ground truth).
+        """
+        # Pré-valida quais agrupadoras podem usar fórmula SUM
+        valid_sums = self._validate_hierarchy_sums(hierarchy)
 
         for row_idx, row_data in enumerate(self._rows):
             excel_row = row_idx + 2  # +1 header, +1 openpyxl 1-based
@@ -542,21 +605,47 @@ class BalanceteXlsxBuilder:
 
                 # Valor
                 if col_idx in NUMERIC_COL_INDICES:
-                    if is_agrupadora and row_idx in hierarchy:
-                        # Agrupadora com filhos: coloca fórmula SUM
+                    use_formula = (
+                        is_agrupadora
+                        and row_idx in hierarchy
+                        and row_idx in valid_sums
+                        and not self._force_values
+                        and row_idx not in self._collapsed_parents
+                    )
+                    if use_formula:
+                        # Agrupadora validada: fórmula SUM
                         formula = self._build_sum_formula(
                             col_idx, hierarchy[row_idx], excel_row
                         )
                         cell.value = formula
                         # Comment com valor original do Gemini
                         if value is not None:
-                            orig = f"{abs(value):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-                            if value < 0:
-                                orig = f"-{orig}"
+                            orig = self._format_br_comment(value)
                             cell.comment = Comment(
                                 f"Gemini original: {orig}",
                                 "Sistema",
                             )
+                    elif (is_agrupadora and row_idx in hierarchy
+                          and not self._force_values
+                          and row_idx not in self._collapsed_parents):
+                        # Agrupadora com soma divergente: mantém valor do PDF
+                        cell.value = value if value is not None else 0.0
+                        # Comment de aviso com a divergência
+                        children = hierarchy[row_idx]
+                        children_sum = sum(
+                            self._rows[c][col_idx]
+                            for c in children
+                            if col_idx < len(self._rows[c])
+                            and self._rows[c][col_idx] is not None
+                        )
+                        orig_str = self._format_br_comment(value)
+                        sum_str = self._format_br_comment(children_sum)
+                        cell.comment = Comment(
+                            f"Soma filhos: {sum_str}\n"
+                            f"Valor PDF: {orig_str}\n"
+                            f"Mantido valor original (divergência em módulo).",
+                            "Sistema",
+                        )
                     else:
                         cell.value = value if value is not None else 0.0
 
@@ -571,6 +660,19 @@ class BalanceteXlsxBuilder:
                 else:
                     cell.value = value if value else ""
                     cell.alignment = LEFT_ALIGN
+
+    @staticmethod
+    def _format_br_comment(value: float | None) -> str:
+        """Formata valor float para string brasileira (para Comments)."""
+        if value is None:
+            return "0,00"
+        formatted = (
+            f"{abs(value):,.2f}"
+            .replace(",", "X")
+            .replace(".", ",")
+            .replace("X", ".")
+        )
+        return f"-{formatted}" if value < 0 else formatted
 
     def _build_sum_formula(
         self,
@@ -598,6 +700,89 @@ class BalanceteXlsxBuilder:
             return 0.0
 
         return f"=SUM({','.join(refs)})"
+
+    def _validate_hierarchy_sums(
+        self, hierarchy: dict[int, list[int]]
+    ) -> set[int]:
+        """Valida quais agrupadoras têm soma de filhos compatível em módulo.
+
+        Compara |SUM(filhos)| com |valor original| para cada coluna numérica.
+        Se pelo menos 2 de 4 colunas batem (tolerância 1%), a fórmula SUM
+        é considerada segura. Caso contrário, o valor original do PDF
+        deve ser mantido.
+
+        Args:
+            hierarchy: Mapeamento pai → filhos diretos.
+
+        Returns:
+            Set de row_indices onde a fórmula SUM é válida.
+        """
+        valid: set[int] = set()
+        kept_original = 0
+
+        for parent_idx, children in hierarchy.items():
+            parent_row = self._rows[parent_idx]
+            matches = 0
+            total_checked = 0
+
+            for col_idx in NUMERIC_COL_INDICES:
+                parent_val = (
+                    parent_row[col_idx]
+                    if col_idx < len(parent_row)
+                    else None
+                )
+                if parent_val is None:
+                    continue
+
+                # Soma valores originais dos filhos diretos
+                children_sum = 0.0
+                for child_idx in children:
+                    child_row = self._rows[child_idx]
+                    child_val = (
+                        child_row[col_idx]
+                        if col_idx < len(child_row)
+                        else None
+                    )
+                    if child_val is not None:
+                        children_sum += child_val
+
+                total_checked += 1
+
+                # Ambos zero → match
+                if abs(parent_val) < 0.005 and abs(children_sum) < 0.005:
+                    matches += 1
+                    continue
+
+                # Um zero e outro não → sem match
+                if abs(parent_val) < 0.005 or abs(children_sum) < 0.005:
+                    continue
+
+                # Compara em módulo (tolerância 1% ou 0.02)
+                tolerance = max(abs(parent_val) * 0.01, 0.02)
+                if abs(abs(children_sum) - abs(parent_val)) <= tolerance:
+                    matches += 1
+
+            if total_checked < 2:
+                # Poucos dados para validar — usa fórmula
+                valid.add(parent_idx)
+            elif matches >= 2:
+                valid.add(parent_idx)
+            else:
+                kept_original += 1
+
+        if kept_original:
+            logger.info(
+                "Validação SUM: %d agrupadoras com fórmula, "
+                "%d mantidas com valor original (soma não confere em módulo).",
+                len(valid), kept_original,
+            )
+        else:
+            logger.info(
+                "Validação SUM: todas as %d agrupadoras com fórmula validada.",
+                len(valid),
+            )
+
+        return valid
 
     def _apply_column_widths(self, ws) -> None:
         """Define larguras das colunas."""

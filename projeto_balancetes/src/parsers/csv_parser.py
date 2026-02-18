@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
@@ -55,14 +56,21 @@ def save_as_csv(
         logger.warning("Tabela unificada ficou vazia após deduplicação.")
         return [], []
 
-    # Pós-processamento: valida agrupadoras se coluna Tipo existir
+    # Pós-processamento: valida agrupadoras (insere coluna Tipo se necessário)
     if len(unified) > 1:
         header = unified[0]
         layout = _detect_column_layout(header)
-        if layout["has_tipo"]:
-            data_rows = unified[1:]
-            data_rows = _postprocess_agrupadoras(data_rows, layout)
-            unified = [header] + data_rows
+        if not layout["has_tipo"]:
+            # Insere coluna "Tipo" na posição 3 (após Descrição) com valor "D" padrão
+            header = header[:3] + ["Tipo"] + header[3:]
+            unified = [header] + [
+                row[:3] + ["D"] + row[3:] for row in unified[1:]
+            ]
+            layout = _detect_column_layout(header)
+            logger.info("Coluna 'Tipo' inserida automaticamente (não veio do Gemini).")
+        data_rows = unified[1:]
+        data_rows = _postprocess_agrupadoras(data_rows, layout)
+        unified = [header] + data_rows
 
     # Verifica e corrige A/D (Tipo) que vazou para colunas numéricas
     unified = _fix_tipo_in_numeric_columns(unified)
@@ -182,18 +190,9 @@ def save_as_xlsx(
                 cell.fill = header_fill
                 cell.alignment = header_align
             else:
-                # Dados
-                is_agrupadora = (
-                    tipo_idx >= 0
-                    and tipo_idx < len(row_data)
-                    and row_data[tipo_idx].strip().upper() == "A"
-                )
-
-                if is_agrupadora:
-                    cell.font = agrupadora_font
-                    cell.fill = agrupadora_fill
-                else:
-                    cell.font = normal_font
+                # Dados — sem formatação direta de agrupadora
+                # (negrito+cor serão via formatação condicional)
+                cell.font = normal_font
 
                 # Alinhamento por tipo de coluna
                 if col_idx in numeric_cols:
@@ -215,6 +214,22 @@ def save_as_xlsx(
     if unified_rows:
         last_col = get_column_letter(len(header))
         ws.auto_filter.ref = f"A1:{last_col}{len(unified_rows)}"
+
+    # Formatação condicional: Tipo=A → negrito + fundo cinza claro
+    if tipo_idx >= 0 and len(unified_rows) > 1:
+        tipo_col_letter = get_column_letter(tipo_idx + 1)
+        last_col_letter = get_column_letter(len(header))
+        last_row = len(unified_rows)
+        data_range = f"A2:{last_col_letter}{last_row}"
+        formula = f'${tipo_col_letter}2="A"'
+        ws.conditional_formatting.add(
+            data_range,
+            FormulaRule(
+                formula=[formula],
+                font=agrupadora_font,
+                fill=agrupadora_fill,
+            ),
+        )
 
     output_path = out_dir / f"{safe_name}.xlsx"
     wb.save(str(output_path))
