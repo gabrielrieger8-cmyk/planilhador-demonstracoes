@@ -1622,6 +1622,126 @@ h2 {
     margin-bottom: 10px;
 }
 
+.chat-ref-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.chat-ref-row select {
+    flex: 1;
+}
+
+.btn-ref-details {
+    padding: 6px 14px;
+    background: #7c4dff;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.82em;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.2s;
+}
+
+.btn-ref-details:hover:not(:disabled) {
+    background: #651fff;
+}
+
+.btn-ref-details:disabled {
+    background: #ccc;
+    cursor: not-allowed;
+}
+
+/* Painel de detalhes da referência */
+.ref-details-panel {
+    background: #f5f0ff;
+    border: 1px solid #d0c0e8;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.ref-details-panel.hidden {
+    display: none;
+}
+
+.ref-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 10px;
+    font-size: 0.88em;
+    color: #444;
+}
+
+.ref-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82em;
+    margin-top: 6px;
+}
+
+.ref-detail-table th {
+    background: #e8e0f5;
+    color: #4a148c;
+    padding: 5px 8px;
+    text-align: left;
+    font-weight: 600;
+    border-bottom: 2px solid #d0c0e8;
+}
+
+.ref-detail-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #e8e0f5;
+    color: #333;
+}
+
+.ref-detail-table tr:hover td {
+    background: #ede7f6;
+}
+
+.ref-details-accordion {
+    margin-top: 8px;
+    border: 1px solid #e0d4f0;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.ref-details-accordion summary {
+    padding: 8px 12px;
+    background: #ede7f6;
+    color: #4a148c;
+    font-weight: 600;
+    font-size: 0.85em;
+    cursor: pointer;
+    user-select: none;
+}
+
+.ref-details-accordion summary:hover {
+    background: #e0d4f0;
+}
+
+.ref-details-accordion > div {
+    padding: 8px 12px;
+}
+
+.ref-detail-empty {
+    color: #999;
+    font-style: italic;
+    font-size: 0.85em;
+    margin: 4px 0;
+}
+
+.ref-detail-instr {
+    font-size: 0.85em;
+    color: #444;
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
 .chat-messages {
     min-height: 60px;
     max-height: 320px;

@@ -334,9 +334,30 @@
 
                     <div class="chat-ref-selector">
                         <label for="chat-ref-select" class="ref-label">Referência a editar</label>
-                        <select id="chat-ref-select" class="ref-model-select">
-                            <option value="">Selecione uma referência...</option>
-                        </select>
+                        <div class="chat-ref-row">
+                            <select id="chat-ref-select" class="ref-model-select">
+                                <option value="">Selecione uma referência...</option>
+                            </select>
+                            <button id="chat-ref-details-btn" class="btn-ref-details" onclick="toggleRefDetails()" disabled>
+                                Ver detalhes
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="chat-ref-details" class="ref-details-panel hidden">
+                        <div class="ref-details-section" id="ref-detail-summary"></div>
+                        <details class="ref-details-accordion">
+                            <summary>Hierarquia de contas</summary>
+                            <div id="ref-detail-hierarchy"></div>
+                        </details>
+                        <details class="ref-details-accordion">
+                            <summary>Convenção de sinais</summary>
+                            <div id="ref-detail-signs"></div>
+                        </details>
+                        <details class="ref-details-accordion">
+                            <summary>Instruções do controller</summary>
+                            <div id="ref-detail-instructions"></div>
+                        </details>
                     </div>
 
                     <div class="chat-model-selector">

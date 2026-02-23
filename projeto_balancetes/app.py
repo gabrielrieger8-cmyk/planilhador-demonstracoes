@@ -778,6 +778,18 @@ async def get_references():
     }
 
 
+@app.get("/references/{filename}")
+async def get_reference_detail(filename: str):
+    """Retorna o JSON completo de uma referência."""
+    from controladoria_core.utils.config import KNOWLEDGE_DIR
+    import json as _json
+
+    json_path = KNOWLEDGE_DIR / f"{filename}.json"
+    if not json_path.exists():
+        raise HTTPException(status_code=404, detail="Referência não encontrada")
+    return _json.loads(json_path.read_text(encoding="utf-8"))
+
+
 @app.delete("/references/{filename}")
 async def delete_reference(filename: str):
     """Remove uma referência do knowledge/."""

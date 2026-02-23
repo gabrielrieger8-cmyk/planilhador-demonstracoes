@@ -5,7 +5,7 @@ let eventSource = null;
 let selectedModel = 'gemini-2.0-flash';
 let signDialogResolve = null;
 let currentPreviewData = null;
-let selectedReferenceName = null;  // referência selecionada para a conversão
+let selectedReferenceName = localStorage.getItem('selectedReferenceName') || null;  // persistido entre refreshes
 let allReferences = [];            // cache da lista de referências
 
 // Elements
@@ -874,6 +874,18 @@ async function loadAllReferences() {
         const data = await resp.json();
         allReferences = data.references || [];
 
+        // Restaura seleção salva no localStorage (após refresh)
+        if (selectedReferenceName) {
+            const saved = allReferences.find(r => r.filename === selectedReferenceName);
+            if (saved) {
+                selectReference(saved);
+            } else {
+                // Referência foi deletada — limpa
+                selectedReferenceName = null;
+                localStorage.removeItem('selectedReferenceName');
+            }
+        }
+
         // Atualiza seletor no painel pré
         renderRefList(allReferences);
 
@@ -948,6 +960,7 @@ function filterReferences() {
 
 function selectReference(ref) {
     selectedReferenceName = ref.filename;
+    localStorage.setItem('selectedReferenceName', ref.filename);
     const displayName = ref.display_name || ref.empresa || ref.filename;
 
     // Atualiza seleção no pré-conversão
@@ -969,6 +982,7 @@ function selectReference(ref) {
 
 function clearSelectedRef() {
     selectedReferenceName = null;
+    localStorage.removeItem('selectedReferenceName');
 
     // Limpa pré
     document.getElementById('ref-selected').classList.add('hidden');
@@ -1060,6 +1074,8 @@ function setRefSource(source) {
         initDropZone('ref-drop-zone-pre', 'ref-file-input-pre', 'pre');
         // Painel pós-conversão
         initDropZone('ref-drop-zone-post', 'ref-file-input-post', 'post');
+        // Carrega referências no page load (para chat e seleção pré-upload)
+        loadAllReferences();
     });
 })();
 
@@ -1342,7 +1358,8 @@ function toggleChatPanel() {
     } else {
         body.classList.remove('collapsed');
         toggle.innerHTML = '&#9660;';
-        populateChatRefSelector();
+        // Garante que referências estejam carregadas antes de popular o selector
+        loadAllReferences().then(() => populateChatRefSelector());
     }
 }
 
@@ -1357,6 +1374,112 @@ function populateChatRefSelector() {
         select.appendChild(opt);
     });
     if (current) select.value = current;
+
+    // Habilita/desabilita botão de detalhes conforme seleção
+    select.onchange = () => {
+        const btn = document.getElementById('chat-ref-details-btn');
+        btn.disabled = !select.value;
+        // Fecha painel se trocar referência
+        document.getElementById('chat-ref-details').classList.add('hidden');
+    };
+    // Estado inicial do botão
+    document.getElementById('chat-ref-details-btn').disabled = !select.value;
+}
+
+// ---------------------------------------------------------------------------
+// Painel de detalhes da referência
+// ---------------------------------------------------------------------------
+let _refDetailsCache = {};
+
+async function toggleRefDetails() {
+    const panel = document.getElementById('chat-ref-details');
+    if (!panel.classList.contains('hidden')) {
+        panel.classList.add('hidden');
+        return;
+    }
+
+    const filename = document.getElementById('chat-ref-select').value;
+    if (!filename) return;
+
+    // Busca dados (com cache)
+    if (!_refDetailsCache[filename]) {
+        const btn = document.getElementById('chat-ref-details-btn');
+        btn.textContent = 'Carregando...';
+        btn.disabled = true;
+        try {
+            const resp = await fetch(`/references/${filename}`);
+            if (!resp.ok) throw new Error('Não encontrada');
+            _refDetailsCache[filename] = await resp.json();
+        } catch (e) {
+            btn.textContent = 'Ver detalhes';
+            btn.disabled = false;
+            return;
+        }
+        btn.textContent = 'Ver detalhes';
+        btn.disabled = false;
+    }
+
+    renderRefDetails(_refDetailsCache[filename]);
+    panel.classList.remove('hidden');
+}
+
+function renderRefDetails(data) {
+    // Resumo
+    const grupos = data.grupos || {};
+    const gruposList = Object.entries(grupos).map(([k, g]) =>
+        `<tr><td>${k}</td><td>${g.nome}</td><td>${g.total_contas}</td><td>${g.total_agrupadoras}</td><td>${g.total_detalhe}</td></tr>`
+    ).join('');
+
+    document.getElementById('ref-detail-summary').innerHTML = `
+        <div class="ref-detail-meta">
+            <span><strong>Empresa:</strong> ${data.empresa || '—'}</span>
+            <span><strong>Periodo:</strong> ${(data.periodo || '').replace('_', '/')}</span>
+            <span><strong>Total contas:</strong> ${data.total_contas || 0}</span>
+        </div>
+        <table class="ref-detail-table">
+            <thead><tr><th>Grupo</th><th>Nome</th><th>Contas</th><th>Agrup.</th><th>Detalhe</th></tr></thead>
+            <tbody>${gruposList}</tbody>
+        </table>
+    `;
+
+    // Hierarquia (níveis 0-2)
+    const hierarchy = (data.hierarchy || []).filter(h => h.nivel <= 2);
+    const hierRows = hierarchy.map(h => {
+        const indent = '\u00A0\u00A0'.repeat(h.nivel);
+        const filhos = (h.filhos_classif || []).join(', ');
+        return `<tr><td>${indent}${h.classificacao}</td><td>${indent}${h.descricao}</td><td>${filhos || '—'}</td></tr>`;
+    }).join('');
+    document.getElementById('ref-detail-hierarchy').innerHTML = `
+        <table class="ref-detail-table">
+            <thead><tr><th>Classif.</th><th>Descrição</th><th>Filhos diretos</th></tr></thead>
+            <tbody>${hierRows}</tbody>
+        </table>
+    `;
+
+    // Sinais — agrupar por grupo e mostrar resumo
+    const signs = data.sign_examples || [];
+    const byGroup = {};
+    signs.forEach(s => {
+        if (!byGroup[s.grupo]) byGroup[s.grupo] = [];
+        if (byGroup[s.grupo].length < 3) byGroup[s.grupo].push(s); // max 3 exemplos por grupo
+    });
+    const signRows = Object.entries(byGroup).map(([g, examples]) =>
+        examples.map(s =>
+            `<tr><td>${g}</td><td>${s.classificacao}</td><td>${s.descricao}</td><td>${s.natureza}</td><td>${s.sinal}</td></tr>`
+        ).join('')
+    ).join('');
+    document.getElementById('ref-detail-signs').innerHTML = signRows
+        ? `<table class="ref-detail-table">
+            <thead><tr><th>Grupo</th><th>Classif.</th><th>Descrição</th><th>Nat.</th><th>Sinal</th></tr></thead>
+            <tbody>${signRows}</tbody>
+           </table>`
+        : '<p class="ref-detail-empty">Nenhum exemplo de sinal registrado.</p>';
+
+    // Instruções
+    const instr = data.user_instructions || '';
+    document.getElementById('ref-detail-instructions').innerHTML = instr
+        ? `<div class="ref-detail-instr">${instr.replace(/\n/g, '<br>')}</div>`
+        : '<p class="ref-detail-empty">Nenhuma instrução definida.</p>';
 }
 
 function chatKeyHandler(e) {
