@@ -2,8 +2,11 @@
 import tempfile
 from pathlib import Path
 
-from src.exporters.xlsx_builder import BalanceteXlsxBuilder, detect_periodo, _parse_br_float
-from src.exporters.sign_logic import (
+from controladoria_core.utils.config import configure as _configure
+_configure(project_root=Path(__file__).parent)
+
+from controladoria_core.exporters.xlsx_builder import BalanceteXlsxBuilder, detect_periodo, _parse_br_float
+from controladoria_core.exporters.sign_logic import (
     STANDARD_CONVENTION,
     SignConfig,
     apply_sign_convention,

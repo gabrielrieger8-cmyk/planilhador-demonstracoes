@@ -1,0 +1,18 @@
+[project]
+name = "controladoria-core"
+version = "0.1.0"
+description = "Core package for Controladoria Plus balancete processing"
+requires-python = ">=3.10"
+dependencies = [
+    "google-genai",
+    "pymupdf",
+    "python-dotenv",
+    "openpyxl",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["controladoria_core*"]

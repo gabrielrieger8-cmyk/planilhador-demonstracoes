@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from src.exporters.hierarchy import get_account_group
+from controladoria_core.exporters.hierarchy import get_account_group
 
 
 @dataclass

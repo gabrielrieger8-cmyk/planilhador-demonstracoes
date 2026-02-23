@@ -14,8 +14,8 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
-from src.exporters.reference_extractor import load_reference_for_prompt
-from src.utils.config import GEMINI_API_KEY, MODELOS_DISPONIVEIS, config, logger
+from controladoria_core.exporters.reference_extractor import load_reference_for_prompt
+from controladoria_core.utils.config import GEMINI_API_KEY, MODELOS_DISPONIVEIS, config, logger
 
 # Quantas páginas enviar por chamada à API
 # Valor 1 = uma chamada por página, maximiza precisão e evita omissões

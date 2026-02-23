@@ -24,5 +24,8 @@ nul
 data/empresas/*/output/
 data/empresas/*/analise/
 
+# Egg-info (editable install)
+*.egg-info/
+
 # Claude Code
 .claude/

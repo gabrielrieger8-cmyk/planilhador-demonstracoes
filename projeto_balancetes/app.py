@@ -17,22 +17,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Bootstrap do core (DEVE ser antes dos imports do core)
+from controladoria_core.utils.config import configure as _configure
+_configure(project_root=Path(__file__).parent)
+
 import fitz  # PyMuPDF — para contar paginas
 import uvicorn
 from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from src.exporters.sign_logic import SignConfig, SignDetectionResult
-from src.exporters.xlsx_builder import BalanceteXlsxBuilder, build_xlsx, detect_periodo
-from src.exporters.reference_extractor import (
+from controladoria_core.exporters.sign_logic import SignConfig, SignDetectionResult
+from controladoria_core.exporters.xlsx_builder import BalanceteXlsxBuilder, build_xlsx, detect_periodo
+from controladoria_core.exporters.reference_extractor import (
     extract_reference_from_xlsx,
     list_references,
     load_reference_for_prompt,
     save_reference,
 )
-from src.orchestrator import Orchestrator, OutputFormat
-from src.utils.config import MODELOS_DISPONIVEIS, config, logger
+from controladoria_core.orchestrator import Orchestrator, OutputFormat
+from controladoria_core.utils.config import MODELOS_DISPONIVEIS, config, logger
 
 # ---------------------------------------------------------------------------
 # App
@@ -610,7 +614,7 @@ async def resubmit(job_id: str, base_name: str, body: dict):
             )
 
             if result.success and result.text:
-                from src.parsers.csv_parser import save_as_csv
+                from controladoria_core.parsers.csv_parser import save_as_csv
                 csv_paths, unified_rows = save_as_csv(
                     result.text,
                     f"{base_name}_v{version}",
@@ -777,7 +781,7 @@ async def get_references():
 @app.delete("/references/{filename}")
 async def delete_reference(filename: str):
     """Remove uma referência do knowledge/."""
-    from src.exporters.reference_extractor import KNOWLEDGE_DIR
+    from controladoria_core.utils.config import KNOWLEDGE_DIR
 
     for ext in (".txt", ".json"):
         fpath = KNOWLEDGE_DIR / f"{filename}{ext}"
@@ -841,7 +845,7 @@ async def chat_reference(body: dict):
 
     try:
         from google import genai
-        from src.utils.config import GEMINI_API_KEY
+        from controladoria_core.utils.config import GEMINI_API_KEY
 
         client = genai.Client(api_key=GEMINI_API_KEY)
         response = client.models.generate_content(

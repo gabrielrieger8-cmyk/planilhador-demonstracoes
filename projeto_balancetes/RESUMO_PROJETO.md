@@ -12,52 +12,70 @@
 
 | Camada | Tecnologia |
 |--------|-----------|
-| Backend | **FastAPI** (`app.py`, 1026 linhas) com SSE para progresso em tempo real |
+| Core compartilhado | **controladoria_core** — pacote Python instalável (`pip install -e .`) |
+| Backend Web | **FastAPI** (`app.py`) com SSE para progresso em tempo real |
+| CLI | **Rich** (`cli.py`) — modo direto + interativo com cores e progress bars |
 | IA | **Google Gemini API** (`google-genai`) — modelos: `gemini-2.0-flash`, `gemini-2.5-flash`, `gemini-3-flash-preview` |
 | PDF | **PyMuPDF** (fitz) para manipulação, extração de texto e OCR fallback (Tesseract) |
 | Excel | **openpyxl** para geração de .xlsx profissional |
-| Frontend | HTML/CSS/JS vanilla (SPA, sem framework) |
+| Frontend Web | HTML/CSS/JS vanilla (SPA, sem framework) |
 
-## Estrutura do Projeto
+## Estrutura do Projeto (Monorepo)
 
 ```
-C:\Users\gabri\Meus Arquivos\Controladoria_Plus\
-├── .venv\                              # Virtual environment Python
-└── projeto_balancetes\
+Controladoria_Plus/
+├── .venv/                              # Virtual environment compartilhado
+├── pyproject.toml                      # Editable install do controladoria_core
+├── CLAUDE.md                           # Instruções para o Claude Code
+├── knowledge/                          # Referências RAG (compartilhado entre projetos)
+│
+├── controladoria_core/                 # Pacote compartilhado (ex-src/)
+│   ├── __init__.py
+│   ├── orchestrator.py                 # Orquestrador principal
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   └── gemini_agent.py             # Agente Gemini principal
+│   ├── parsers/
+│   │   ├── __init__.py
+│   │   └── csv_parser.py               # Parser e pós-processamento
+│   ├── exporters/
+│   │   ├── __init__.py
+│   │   ├── xlsx_builder.py             # Excel profissional com fórmulas SUM
+│   │   ├── sign_logic.py               # Lógica de sinais D/C → +/-
+│   │   ├── hierarchy.py                # Árvore de classificação contábil
+│   │   └── reference_extractor.py      # Sistema RAG
+│   └── utils/
+│       ├── __init__.py
+│       └── config.py                   # Configurações centralizadas (configure())
+│
+├── projeto_balancetes/                 # Projeto Web (FastAPI)
+│   ├── .env                            # GEMINI_API_KEY
+│   ├── app.py                          # FastAPI backend
+│   ├── main.py                         # Ponto de entrada CLI simples
+│   ├── test_xlsx_builder.py            # Testes
+│   ├── requirements.txt
+│   ├── data/input/, data/output/
+│   ├── static/                         # Frontend HTML/JS/CSS
+│   ├── SESSION_LOG.md
+│   └── RESUMO_PROJETO.md
+│
+└── projeto_balancetes_cli/             # Projeto CLI (Rich)
     ├── .env                            # GEMINI_API_KEY
-    ├── .gitignore
-    ├── app.py                          # FastAPI backend (1026 linhas)
-    ├── main.py                         # Ponto de entrada CLI (92 linhas)
-    ├── requirements.txt                # google-genai, pymupdf, python-dotenv, pytest, openpyxl
-    ├── test_xlsx_builder.py            # Testes do xlsx_builder + sign_logic (223 linhas)
-    ├── data/
-    │   ├── input/                      # PDFs enviados pelo usuário
-    │   └── output/                     # CSVs e XLSXs gerados
-    ├── knowledge/                      # Referências RAG (arquivos .txt e .json)
-    ├── src/
-    │   ├── __init__.py
-    │   ├── orchestrator.py             # Orquestrador principal (203 linhas)
-    │   ├── agents/
-    │   │   ├── __init__.py
-    │   │   └── gemini_agent.py         # Agente Gemini principal (1009 linhas)
-    │   ├── parsers/
-    │   │   ├── __init__.py
-    │   │   └── csv_parser.py           # Parser e pós-processamento (1217 linhas)
-    │   ├── exporters/
-    │   │   ├── __init__.py
-    │   │   ├── xlsx_builder.py         # Excel profissional com fórmulas SUM (846 linhas)
-    │   │   ├── sign_logic.py           # Lógica de sinais D/C → +/- (309 linhas)
-    │   │   ├── hierarchy.py            # Árvore de classificação contábil (114 linhas)
-    │   │   └── reference_extractor.py  # Sistema RAG — extrai padrão de XLSX validado (744 linhas)
-    │   └── utils/
-    │       ├── __init__.py
-    │       └── config.py               # Configurações centralizadas (109 linhas)
-    ├── static/
-    │   ├── index.html                  # Interface HTML (363 linhas)
-    │   ├── app.js                      # JavaScript frontend (52K)
-    │   └── style.css                   # Estilos CSS (30K)
-    └── tests/
+    ├── cli.py                          # CLI com Rich (modo direto + interativo)
+    ├── requirements.txt                # rich
+    └── data/input/, data/output/
 ```
+
+### Bootstrap dos projetos
+
+Cada projeto consumidor deve chamar `configure()` antes de usar o core:
+
+```python
+from controladoria_core.utils.config import configure
+configure(project_root=Path(__file__).parent)
+```
+
+Isso seta `PROJECT_ROOT`, `DATA_DIR`, `INPUT_DIR`, `OUTPUT_DIR`, `KNOWLEDGE_DIR` e carrega `.env`.
 
 ## Repositório Git
 
@@ -297,8 +315,11 @@ XLSX validado → extract_reference_from_xlsx() → ReferenceData
 - **Downloads**: Individual (CSV/XLSX) ou ZIP com todos os arquivos
 - **Dialog de Sinais**: Modal para escolha de convenção quando auto-detect é inconclusivo
 
-### 10. `config.py` — Configurações Centralizadas (109 linhas)
+### 10. `config.py` — Configurações Centralizadas (`controladoria_core/utils/config.py`)
 
+- **`configure(project_root, env_file, knowledge_dir)`**: Bootstrap obrigatório — seta paths, carrega `.env`, cria diretórios
+- `PROJECT_ROOT`, `DATA_DIR`, `INPUT_DIR`, `OUTPUT_DIR`, `KNOWLEDGE_DIR` começam como `None`
+- `KNOWLEDGE_DIR` default: `PROJECT_ROOT.parent / "knowledge"` (raiz do monorepo, compartilhado)
 - `GEMINI_API_KEY` carregada do `.env` via python-dotenv
 - `ProcessingConfig` dataclass: modelo (`gemini-2.0-flash`), temperatura (0.1), max_tokens (200000), timeout (120s)
 - **Modelos de conversão** (`MODELOS_DISPONIVEIS`):
@@ -308,25 +329,42 @@ XLSX validado → extract_reference_from_xlsx() → ReferenceData
 - **Modelos de referência** (`MODELOS_REFERENCIA`):
   - `gemini-2.5-flash` — in: $0.15/1M, out: $3.50/1M
   - `gemini-2.5-pro` — in: $1.25/1M, out: $10.00/1M
-- Diretórios: `PROJECT_ROOT / "data" / "input"` e `"output"`, criados automaticamente
 - Logger configurado com formato `[timestamp] LEVEL name - message`
 
-### 11. `main.py` — Ponto de Entrada CLI (92 linhas)
+### 11. `main.py` — Ponto de Entrada CLI simples (92 linhas)
 
-Script de linha de comando para processamento sem interface web:
+Script de linha de comando básico (projeto web):
 - `python main.py` — processa todos os PDFs em `data/input/`
 - `python main.py balancete.pdf` — processa um arquivo específico
 - Exibe resumo final com status, tempo e custo por arquivo
 
-### 12. `test_xlsx_builder.py` — Testes (223 linhas)
+### 12. `cli.py` — CLI Rich (`projeto_balancetes_cli/cli.py`)
 
-Testes dos cenários reais de sinais contábeis:
+CLI avançada com interface Rich para terminal:
+
+**Modo direto**: `python cli.py balancete.pdf --model gemini-2.5-flash --xlsx --workers 4`
+- argparse com flags: `--model`, `--xlsx`, `--workers`, `--sign-mode`, `--reference`, `--output-dir`, `--detail-level`
+- Processa, mostra Rich progress, exibe resultados, sai
+
+**Modo interativo**: `python cli.py` (sem args)
+- Menu Rich com 6 opções: Processar PDFs, Gerar XLSX Prof., Selecionar modelo, Gerenciar referências, Listar input, Sair
+- Prompts interativos para workers, referência, sinais
+- Preview em tabela Rich (agrupadoras em bold azul)
+
+**Componentes Rich**: Panel, Table, Progress (SpinnerColumn + BarColumn + TimeElapsedColumn), Prompt, Confirm, IntPrompt
+
+### 13. `test_xlsx_builder.py` — Testes (358 linhas)
+
+9 testes dos cenários reais de sinais contábeis:
 1. Convenção padrão (STANDARD_CONVENTION)
 2. Depreciação no Ativo (C → negativo)
 3. Passivo (C → positivo, D → negativo)
 4. Despesas (D → negativo, C → positivo) e Receitas (D → negativo, C → positivo)
 5. `detect_periodo()` — parsing de período do nome do arquivo
 6. Build XLSX completo com sinais aplicados e verificação das células
+7. Agrupadora com soma divergente (mantém valor original do PDF)
+8. Filtro somente agrupadoras (detail_level="agrupadoras")
+9. Filtro personalizado — colapsar grupo específico
 
 ## Detalhes Técnicos Importantes
 
@@ -346,15 +384,27 @@ Testes dos cenários reais de sinais contábeis:
 ## Como Rodar
 
 ```bash
-cd "C:\Users\gabri\Meus Arquivos\Controladoria_Plus"
+cd "C:\Users\gabri\Dev\Controladoria_Plus"
 .venv\Scripts\activate
+
+# Instalar pacote core (uma vez)
+pip install -e .
+
+# Projeto Web
 cd projeto_balancetes
 pip install -r requirements.txt
-# Criar .env com GEMINI_API_KEY=sua_chave
-python app.py
-# Abrir http://localhost:8000
+python app.py              # Abrir http://localhost:8000
+
+# Projeto CLI
+cd projeto_balancetes_cli
+python cli.py              # Modo interativo
+python cli.py *.pdf        # Modo direto
+
+# Testes
+cd projeto_balancetes
+python test_xlsx_builder.py
 ```
 
 ## Próximos Passos
 
-Este projeto está **pronto e funcionando**. O próximo projeto da pipeline será o **Classificador/Consolidador** — para classificar e consolidar os balancetes gerados por este conversor em uma mesma planilha ou banco de dados, alimentando o projeto final de Dashboard.
+Este projeto está **pronto e funcionando** com duas interfaces (web + CLI). O próximo projeto da pipeline será o **Classificador/Consolidador** — para classificar e consolidar os balancetes gerados por este conversor em uma mesma planilha ou banco de dados, alimentando o projeto final de Dashboard.

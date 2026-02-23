@@ -10,8 +10,11 @@ import sys
 import time
 from pathlib import Path
 
-from src.orchestrator import Orchestrator, OutputFormat
-from src.utils.config import INPUT_DIR
+from controladoria_core.utils.config import configure as _configure
+_configure(project_root=Path(__file__).parent)
+
+from controladoria_core.orchestrator import Orchestrator, OutputFormat
+from controladoria_core.utils.config import INPUT_DIR
 
 
 def main() -> None:

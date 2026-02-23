@@ -20,14 +20,14 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.comments import Comment
 
-from src.exporters.hierarchy import build_hierarchy, get_account_group
-from src.exporters.sign_logic import (
+from controladoria_core.exporters.hierarchy import build_hierarchy, get_account_group
+from controladoria_core.exporters.sign_logic import (
     SignConfig,
     SignDetectionResult,
     apply_sign_convention,
     detect_sign_mode,
 )
-from src.utils.config import logger
+from controladoria_core.utils.config import logger
 
 
 # ---------------------------------------------------------------------------
@@ -873,7 +873,7 @@ def build_xlsx(
     Returns:
         Tupla (Path do xlsx, SignDetectionResult ou None).
     """
-    from src.utils.config import OUTPUT_DIR
+    from controladoria_core.utils.config import OUTPUT_DIR
 
     out_dir = Path(output_dir) if output_dir else OUTPUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)

@@ -18,8 +18,8 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from src.exporters.hierarchy import build_hierarchy, get_account_group, get_direct_children
-from src.utils.config import logger
+from controladoria_core.exporters.hierarchy import build_hierarchy, get_account_group, get_direct_children
+from controladoria_core.utils.config import logger
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +597,14 @@ def _build_plano_contas(ref: ReferenceData, rows: list[list[str]]) -> None:
 # Persistência
 # ---------------------------------------------------------------------------
 
-KNOWLEDGE_DIR = Path(__file__).parent.parent.parent / "knowledge"
+def _get_knowledge_dir() -> Path:
+    """Retorna diretório de conhecimento configurado."""
+    from controladoria_core.utils.config import KNOWLEDGE_DIR as _kdir
+    if _kdir is None:
+        raise RuntimeError(
+            "Core não configurado. Chame controladoria_core.utils.config.configure() primeiro."
+        )
+    return _kdir
 
 
 def save_reference(
@@ -620,7 +627,7 @@ def save_reference(
     if user_instructions:
         ref.user_instructions = user_instructions
 
-    kdir = knowledge_dir or KNOWLEDGE_DIR
+    kdir = knowledge_dir or _get_knowledge_dir()
     kdir.mkdir(parents=True, exist_ok=True)
 
     # Nome base: usa nome customizado ou fallback empresa_periodo
@@ -670,7 +677,7 @@ def load_reference_for_prompt(
     Returns:
         Texto da referência, ou None se não houver.
     """
-    kdir = knowledge_dir or KNOWLEDGE_DIR
+    kdir = knowledge_dir or _get_knowledge_dir()
     if not kdir.exists():
         return None
 
@@ -719,7 +726,7 @@ def list_references(
     Returns:
         Lista de dicts com info de cada referência.
     """
-    kdir = knowledge_dir or KNOWLEDGE_DIR
+    kdir = knowledge_dir or _get_knowledge_dir()
     if not kdir.exists():
         return []
 

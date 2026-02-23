@@ -16,7 +16,7 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from src.utils.config import OUTPUT_DIR, logger
+from controladoria_core.utils.config import OUTPUT_DIR, logger
 
 
 def save_as_csv(

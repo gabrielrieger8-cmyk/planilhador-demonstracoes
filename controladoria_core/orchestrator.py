@@ -13,9 +13,9 @@ from typing import Any
 
 import fitz  # PyMuPDF — apenas para contar páginas
 
-from src.agents.gemini_agent import GeminiAgent, GeminiResult
-from src.parsers.csv_parser import save_as_csv, save_as_xlsx
-from src.utils.config import OUTPUT_DIR, logger
+from controladoria_core.agents.gemini_agent import GeminiAgent, GeminiResult
+from controladoria_core.parsers.csv_parser import save_as_csv, save_as_xlsx
+from controladoria_core.utils.config import OUTPUT_DIR, logger
 
 
 class OutputFormat(str, Enum):
