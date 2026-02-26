@@ -1,0 +1,54 @@
+TAREFA: Transcrever TODAS as linhas de tabela financeira (balancete) presentes neste PDF.
+
+REGRA #1 — ZERO OMISSÕES:
+- Extraia ABSOLUTAMENTE TODAS as linhas visíveis. Sem exceção.
+- NÃO resuma. NÃO agrupe. NÃO simplifique. NÃO pule nenhuma conta.
+- Cada linha do documento original DEVE aparecer na sua saída.
+- Se houver 80 linhas visíveis, sua saída DEVE ter 80 linhas.
+- Contas de clientes, fornecedores, bancos — TODAS individualmente.
+- Subcontas (1.1.10.200.1, etc.) são TÃO importantes quanto as contas principais.
+- NÃO pare antes de terminar todas as linhas da página.
+
+COLUNAS DO PDF ORIGINAL E COMO MAPEAR:
+O PDF pode ter colunas como: CONTA, CLASSIFICAÇÃO, TIPO, NOME DA CONTA, SALDO ANTERIOR, DÉBITO, CRÉDITO, SALDO ATUAL.
+- A coluna "TIPO" do PDF original (que contém letras T, C, S etc.) deve ser DESCARTADA.
+  NÃO copie essa coluna. Ela é irrelevante.
+- Copie todas as OUTRAS colunas normalmente.
+
+COLUNA TIPO (GERADA POR VOCÊ — NÃO É A DO PDF):
+- CRIE uma nova coluna "Tipo" com SUA classificação:
+  - "A" = contas AGRUPADORAS (totalizadoras, que somam outras contas abaixo).
+  - "D" = contas de DETALHE (individuais, folhas da árvore contábil).
+
+COMO IDENTIFICAR AGRUPADORAS (Tipo=A) — PRESTE MUITA ATENÇÃO:
+- Contas em NEGRITO ou destaque visual quase sempre são agrupadoras.
+- Contas cujo Saldo Atual é a SOMA dos saldos das contas logo abaixo são agrupadoras.
+- Contas com Débito=0 e Crédito=0 (sem movimento próprio) geralmente são agrupadoras.
+- Nomes genéricos/categóricos são agrupadoras: "IMPOSTOS, TAXAS E CONTRIBUIÇÕES",
+  "DESPESAS GERAIS ADMINISTRATIVAS", "DESPESAS COM PESSOAL", "ATIVO CIRCULANTE",
+  "PASSIVO CIRCULANTE", "RECEITAS OPERACIONAIS", etc.
+- Nomes específicos são detalhe (D): "IOF", "IPTU", "IPVA", "Banco do Brasil",
+  "ASSESSORIA ADVOCATÍCIA", "COMBUSTÍVEL P/ VEÍCULOS", etc.
+- Na dúvida entre A e D, olhe se a conta tem filhas abaixo (contas mais específicas
+  que detalham essa conta). Se tiver filhas, é A. Se não, é D.
+- ERRAR para A é MENOS grave que errar para D. Na dúvida, marque como "A".
+
+VALORES NUMÉRICOS:
+- Valores EXATOS: não arredonde, não omita casas decimais.
+- Mantenha D (Débito) e C (Crédito) junto aos valores numéricos.
+- Formato brasileiro: ponto para milhar, vírgula para decimal.
+
+FORMATO DE SAÍDA — Tabela Markdown com EXATAMENTE estas 8 colunas:
+Código | Classificação | Descrição da conta | Tipo | Saldo Anterior | Débito | Crédito | Saldo Atual
+
+Onde:
+- Código = número da conta (ex: 1, 5, 685, 615)
+- Classificação = código hierárquico (ex: 01, 01.1, 01.1.1.02.01)
+- Descrição da conta = nome da conta (ex: ATIVO, Caixa, Banco do Brasil S/A)
+- Tipo = A ou D (gerado por você, NÃO copiado do PDF)
+- Saldo Anterior, Débito, Crédito, Saldo Atual = valores numéricos com D ou C no final
+
+Apenas dados — sem texto explicativo, sem comentários.
+
+LEMBRETE FINAL: Se você omitir QUALQUER linha, o resultado é INCORRETO.
+Completude é MAIS importante que formatação. NÃO TRUNCAR.

@@ -1,5 +1,0 @@
-google-genai
-pymupdf
-python-dotenv
-pytest
-openpyxl

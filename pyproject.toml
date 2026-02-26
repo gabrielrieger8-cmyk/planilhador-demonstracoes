@@ -1,18 +1,8 @@
 [project]
-name = "controladoria-core"
-version = "0.1.0"
-description = "Core package for Controladoria Plus balancete processing"
+name = "planilhador-demonstracoes"
+version = "1.0.0"
+description = "PDF → Excel: extrai demonstrações financeiras com Gemini + Sonnet"
 requires-python = ">=3.10"
-dependencies = [
-    "google-genai",
-    "pymupdf",
-    "python-dotenv",
-    "openpyxl",
-]
 
-[build-system]
-requires = ["setuptools>=68.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-include = ["controladoria_core*"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]

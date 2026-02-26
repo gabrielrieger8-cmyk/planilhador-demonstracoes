@@ -1,26 +1,41 @@
-# CLAUDE.md - Instruções para o Claude Code
+# CLAUDE.md - Planilhador de Demonstrações
 
 ## Estilo de trabalho HIGH IMPORTANCE!!
 - Durante planejamento e discussão, pode fazer perguntas e alinhar a abordagem.
 - Na hora de executar (rodar código, editar arquivos, usar ferramentas), faça direto sem pedir permissão.
 - Se algo falhar, corrija e siga em frente.
 
-## Início de sessão
+## O que é o projeto
 
-Ao iniciar uma sessão com contexto zerado, leia estes arquivos antes de qualquer tarefa:
+Planilhador de Demonstrações converte PDFs de demonstrações financeiras (balancetes, DRE, balanço patrimonial) em planilhas Excel profissionais.
 
-1. `projeto_balancetes/SESSION_LOG.md` — histórico das sessões anteriores (o que foi feito, decisões, pendências)
-2. `projeto_balancetes/RESUMO_PROJETO.md` — arquitetura, stack e estrutura do projeto
+**Pipeline**: PDF → Gemini 2.0 Flash (classifica) → Gemini 2.5 Flash (extrai) → Sonnet (formata) → Validação → Excel multi-aba + CSV
 
-Isso evita retrabalho e garante continuidade entre sessões.
+**Princípio**: Gemini = "olhos" (lê o PDF). Sonnet = "cérebro" (entende e estrutura).
 
-## Estrutura do monorepo
+## Estrutura do projeto
 
-- `controladoria_core/` — pacote Python compartilhado (instalado com `pip install -e .`)
-- `projeto_balancetes/` — projeto web (FastAPI + frontend HTML/JS/CSS)
-- `projeto_balancetes_cli/` — projeto CLI (Rich — terminal com cores)
-- `knowledge/` — referências RAG compartilhadas entre projetos
-- Cada projeto chama `configure(project_root=...)` antes de usar o core
+```
+app/
+  main.py              # FastAPI app, mount static, startup
+  config.py            # Anthropic + Gemini pricing, DB URL
+  jobs.py              # Job/FileInfo/JobProgress dataclasses
+  models/              # SQLAlchemy (database.py, documento.py, conta_contabil.py)
+  routes/              # upload.py, progress.py (SSE), results.py
+  services/            # pipeline.py, gemini_client.py, anthropic_client.py, classifier.py, validator.py, exporter.py
+  prompts/             # Prompts .txt para cada modelo/etapa
+  utils/               # pdf_utils.py
+static/                # Frontend SPA (index.html, app.js, style.css)
+tests/                 # test_validator.py, test_exporter.py
+run.py                 # Entry point (uvicorn, porta 8000)
+requirements.txt       # Dependências
+```
+
+## Comandos úteis
+
+- `python run.py` — inicia o servidor na porta 8000
+- `python -m pytest tests/ -v` — roda os testes (25 testes)
+- `pip install -r requirements.txt` — instala dependências
 
 ## Session Log
 

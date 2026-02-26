@@ -1,0 +1,9 @@
+fastapi>=0.115
+uvicorn[standard]>=0.34
+anthropic>=0.52
+google-genai>=1.0
+openpyxl>=3.1
+pymupdf>=1.25
+sqlalchemy>=2.0
+python-dotenv>=1.0
+python-multipart>=0.0.20

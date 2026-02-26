@@ -4,6 +4,7 @@
 # Secrets / API keys
 .env
 *.env
+!.env.example
 
 # Python cache
 __pycache__/
@@ -19,13 +20,22 @@ Thumbs.db
 .DS_Store
 nul
 
-# Temp / output files
-*.tmp
-data/empresas/*/output/
-data/empresas/*/analise/
-
-# Egg-info (editable install)
+# Egg-info
 *.egg-info/
 
 # Claude Code
 .claude/
+
+# Pytest
+.pytest_cache/
+
+# Database
+data.db*
+
+# Uploads e output
+uploads/
+output/
+
+# Arquivos gerados
+*.xlsx
+*.csv

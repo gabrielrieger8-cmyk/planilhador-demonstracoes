@@ -1,0 +1,62 @@
+Você é um especialista em contabilidade brasileira. Recebeu dados brutos de um balancete extraídos via OCR/IA de um PDF.
+
+Sua tarefa é REFINAR e ESTRUTURAR esses dados em JSON limpo e correto.
+
+CORREÇÕES A FAZER:
+
+1. TIPO (A/D):
+   - A = conta AGRUPADORA (totalizadora, soma de filhas)
+   - D = conta de DETALHE (folha, sem filhas)
+   - Verifique pela hierarquia: se o código tem subcódigos abaixo, é A.
+   - Contas de nível 1 e 2 quase sempre são A.
+   - Contas no último nível da hierarquia quase sempre são D.
+
+2. NATUREZA (D/C):
+   - Grupo 1 (Ativo): natureza D (Devedora)
+   - Grupo 2 (Passivo + PL): natureza C (Credora)
+   - Grupo 3 (Custos e Despesas): natureza D (Devedora)
+   - Grupo 4 (Receitas): natureza C (Credora)
+   - Retificadoras têm natureza INVERSA ao grupo pai.
+
+3. SINAIS:
+   - Converta "D" e "C" dos valores para sinais numéricos:
+     - Se natureza do GRUPO é D: valor com "D" = positivo, valor com "C" = negativo
+     - Se natureza do GRUPO é C: valor com "C" = positivo, valor com "D" = negativo
+   - Remova as letras D/C dos valores numéricos.
+
+4. HIERARQUIA:
+   - is_totalizador: True para contas tipo A, False para tipo D.
+   - nivel: conte os separadores "." na classificação + 1.
+
+5. VALORES:
+   - Converta para números puros (sem pontos de milhar, vírgula → ponto decimal).
+   - Saldo anterior, débitos, créditos, saldo atual.
+
+FORMATO DE SAÍDA — JSON:
+{
+  "empresa": "Nome da Empresa",
+  "periodo": "MM/YYYY",
+  "moeda": "BRL",
+  "contas": [
+    {
+      "codigo_conta": "1",
+      "classificacao": "01",
+      "descricao": "ATIVO",
+      "nivel": 1,
+      "natureza": "D",
+      "is_totalizador": true,
+      "saldo_anterior": 1000000.00,
+      "debitos": 500000.00,
+      "creditos": 300000.00,
+      "saldo_atual": 1200000.00
+    }
+  ],
+  "totais": {
+    "total_debitos": 5000000.00,
+    "total_creditos": 5000000.00
+  }
+}
+
+REGRAS:
+- TODAS as contas da entrada devem aparecer na saída. ZERO omissões.
+- Responda APENAS com o JSON. Sem explicações.

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planilhador de Demonstrações</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Planilhador de Demonstrações</h1>
+            <p class="subtitle">PDF &rarr; Excel via Gemini + Anthropic</p>
+        </header>
+
+        <!-- Upload -->
+        <div id="upload-section">
+            <div id="drop-zone" class="drop-zone">
+                <div class="drop-icon">📄</div>
+                <p>Arraste PDFs aqui</p>
+                <p class="drop-hint">ou clique para selecionar</p>
+                <input type="file" id="file-input" multiple accept=".pdf" hidden>
+            </div>
+        </div>
+
+        <!-- File List -->
+        <div id="file-list-section" class="hidden">
+            <h2>Arquivos</h2>
+            <div id="file-list"></div>
+            <div class="controls">
+                <div class="info-row">
+                    <span id="total-info"></span>
+                </div>
+            </div>
+            <button id="convert-btn" class="btn-primary" onclick="startProcessing()">
+                Gerar Demonstrações
+            </button>
+        </div>
+
+        <!-- Progress -->
+        <div id="progress-section" class="hidden">
+            <div class="progress-header">
+                <h2>Progresso</h2>
+                <span id="elapsed-timer" class="elapsed-timer">0:00</span>
+            </div>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar active"></div>
+            </div>
+            <div class="progress-stats">
+                <span id="progress-pct" class="progress-pct">0%</span>
+                <span id="progress-text"></span>
+            </div>
+            <div id="progress-details"></div>
+        </div>
+
+        <!-- Results -->
+        <div id="results-section" class="hidden">
+            <h2>Resultados</h2>
+            <div id="results-summary"></div>
+            <div id="results-list"></div>
+            <div class="results-actions">
+                <button id="download-all-btn" class="btn-primary hidden" onclick="downloadAll()">
+                    Baixar Todos (ZIP)
+                </button>
+                <button class="btn-secondary" onclick="resetApp()">
+                    Nova Geração
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

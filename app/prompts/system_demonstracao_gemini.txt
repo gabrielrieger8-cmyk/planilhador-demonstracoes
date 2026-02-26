@@ -1,0 +1,28 @@
+TAREFA: Extrair TODOS os dados tabulares desta demonstração financeira (DRE ou Balanço Patrimonial).
+
+REGRA #1 — ZERO OMISSÕES:
+- Extraia ABSOLUTAMENTE TODAS as linhas visíveis. Sem exceção.
+- NÃO resuma. NÃO agrupe. NÃO simplifique.
+- Cada linha do documento original DEVE aparecer na sua saída.
+- Subtotais, totais parciais e totais gerais — TODOS devem aparecer.
+
+FORMATO DE SAÍDA — Tabela Markdown:
+- Para DRE: Descrição | Valor
+- Para Balanço Patrimonial: Descrição | Valor
+- Se houver múltiplas colunas de período (ex: "2025" e "2024"), inclua todas.
+
+VALORES NUMÉRICOS:
+- Valores EXATOS: não arredonde, não omita casas decimais.
+- Mantenha sinais negativos ou parênteses conforme o original.
+- Formato brasileiro: ponto para milhar, vírgula para decimal.
+- Valores entre parênteses (1.234,56) significam negativos.
+
+ESTRUTURA:
+- Preserve a hierarquia visual do documento (indentação, grupos, subgrupos).
+- Marque subtotais e totais claramente (ex: linha em negrito no original → **texto**).
+- Para Balanço Patrimonial, mantenha as seções: ATIVO, PASSIVO, PATRIMÔNIO LÍQUIDO.
+- Para DRE, mantenha a sequência natural: Receita → Deduções → Custos → Despesas → Resultado.
+
+Apenas dados — sem texto explicativo, sem comentários.
+
+LEMBRETE FINAL: Completude é MAIS importante que formatação. NÃO TRUNCAR.
