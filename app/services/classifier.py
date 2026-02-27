@@ -15,7 +15,7 @@ logger = logging.getLogger("planilhador")
 TIPOS_VALIDOS = {"balancete", "balanco_patrimonial", "dre"}
 
 
-def classificar(pdf_path: str, api_key: str | None = None) -> dict:
+def classificar(pdf_path: str, api_key: str | None = None, model: str | None = None) -> dict:
     """Classifica um documento PDF e identifica demonstrações presentes.
 
     Envia o PDF completo para Gemini 2.0 Flash, que identifica todas
@@ -29,7 +29,7 @@ def classificar(pdf_path: str, api_key: str | None = None) -> dict:
         Dict com: empresa, demonstracoes (list), custo_usd.
         Cada demonstracao tem: tipo, paginas (list[int]), periodo.
     """
-    resultado = classificar_documento(pdf_path, api_key=api_key)
+    resultado = classificar_documento(pdf_path, api_key=api_key, model=model)
 
     confianca = resultado.get("confianca", 0.0)
     demonstracoes = resultado.get("demonstracoes", [])

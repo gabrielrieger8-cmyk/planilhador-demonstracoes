@@ -43,6 +43,11 @@ class Job:
     error: str | None = None
     started_at: float = 0.0
     preview_data: dict[str, list[list[str]]] = field(default_factory=dict)
+    models: dict[str, str] = field(default_factory=lambda: {
+        "classifier": "gemini-2.5-flash",
+        "extractor": "gemini-2.5-flash",
+        "formatter": "gemini-2.5-flash",
+    })
 
 
 # Store global

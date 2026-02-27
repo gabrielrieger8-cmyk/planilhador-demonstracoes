@@ -1,6 +1,6 @@
-"""Cliente Anthropic: Sonnet formata e refina dados extraídos pelo Gemini.
+"""Cliente Anthropic: formata e refina dados extraídos pelo Gemini.
 
-Sonnet = "cérebro" do sistema. Recebe texto bruto do Gemini e estrutura em JSON.
+Recebe texto bruto do Gemini e estrutura em JSON.
 Único uso de Anthropic no projeto.
 """
 
@@ -57,17 +57,20 @@ def formatar_demonstracao(
     texto_gemini: str,
     tipo: str,
     api_key: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """Formata dados extraídos pelo Gemini em JSON estruturado usando Sonnet.
+    """Formata dados extraídos pelo Gemini em JSON estruturado.
 
     Args:
         texto_gemini: Texto bruto do Gemini (Markdown tables).
         tipo: "dre" ou "balanco_patrimonial".
         api_key: Chave da API Anthropic.
+        model: Modelo Anthropic a usar.
 
     Returns:
         Dict com: dados (JSON estruturado), custo_usd, usage.
     """
+    modelo = model or FORMATTER_MODEL
     client = anthropic.Anthropic(
         api_key=api_key or ANTHROPIC_API_KEY
     )
@@ -101,7 +104,7 @@ def formatar_demonstracao(
     for attempt in range(4):
         def _call():
             return client.messages.stream(
-                model=FORMATTER_MODEL,
+                model=modelo,
                 max_tokens=64000,
                 system=[
                     {
@@ -118,7 +121,7 @@ def formatar_demonstracao(
             response = stream.get_final_message()
 
         texto_parte = response.content[0].text
-        total_custo += calcular_custo_anthropic(response.usage, FORMATTER_MODEL)
+        total_custo += calcular_custo_anthropic(response.usage, modelo)
         total_input += response.usage.input_tokens
         total_output += response.usage.output_tokens
         full_text += texto_parte
@@ -154,18 +157,21 @@ def formatar_demonstracao(
 def refinar_balancete(
     csv_text: str,
     api_key: str | None = None,
+    model: str | None = None,
 ) -> dict:
-    """Refina dados de balancete extraídos pelo Gemini usando Sonnet.
+    """Refina dados de balancete extraídos pelo Gemini.
 
-    Sonnet corrige: Tipo A/D, natureza D/C, sinais, hierarquia.
+    Corrige: Tipo A/D, natureza D/C, sinais, hierarquia.
 
     Args:
         csv_text: Texto Markdown com tabelas do balancete (do Gemini).
         api_key: Chave da API Anthropic.
+        model: Modelo Anthropic a usar.
 
     Returns:
         Dict com: dados (JSON estruturado), custo_usd, usage.
     """
+    modelo = model or FORMATTER_MODEL
     client = anthropic.Anthropic(
         api_key=api_key or ANTHROPIC_API_KEY
     )
@@ -191,7 +197,7 @@ def refinar_balancete(
     for attempt in range(4):
         def _call():
             return client.messages.stream(
-                model=FORMATTER_MODEL,
+                model=modelo,
                 max_tokens=64000,
                 system=[
                     {
@@ -208,7 +214,7 @@ def refinar_balancete(
             response = stream.get_final_message()
 
         texto_parte = response.content[0].text
-        total_custo += calcular_custo_anthropic(response.usage, FORMATTER_MODEL)
+        total_custo += calcular_custo_anthropic(response.usage, modelo)
         total_input += response.usage.input_tokens
         total_output += response.usage.output_tokens
         full_text += texto_parte

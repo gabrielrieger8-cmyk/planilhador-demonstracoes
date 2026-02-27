@@ -9,18 +9,29 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
-from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY, logger
+from app.config import (
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, ALL_MODELS,
+    CLASSIFIER_MODEL, EXTRACTOR_MODEL, FORMATTER_MODEL, logger,
+)
 from app.jobs import JobProgress, jobs
+
+
+class ProcessRequest(BaseModel):
+    classifier: Optional[str] = None
+    extractor: Optional[str] = None
+    formatter: Optional[str] = None
 
 router = APIRouter()
 
 
 @router.post("/process/{job_id}")
-async def start_processing(job_id: str):
+async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest()):
     """Inicia processamento em background."""
     job = jobs.get(job_id)
     if not job:
@@ -32,6 +43,24 @@ async def start_processing(job_id: str):
     if not GEMINI_API_KEY:
         raise HTTPException(400, "GEMINI_API_KEY não configurada.")
 
+    # Configura modelos (valida se existem no catálogo)
+    models = {
+        "classifier": body.classifier or CLASSIFIER_MODEL,
+        "extractor": body.extractor or EXTRACTOR_MODEL,
+        "formatter": body.formatter or FORMATTER_MODEL,
+    }
+    for stage, model_id in models.items():
+        if model_id not in ALL_MODELS:
+            raise HTTPException(400, f"Modelo inválido para {stage}: {model_id}")
+
+    # Verifica se Anthropic API key está configurada quando necessário
+    needs_anthropic = any(
+        m.startswith("claude-") for m in models.values()
+    )
+    if needs_anthropic and not ANTHROPIC_API_KEY:
+        raise HTTPException(400, "ANTHROPIC_API_KEY não configurada (modelo Anthropic selecionado).")
+
+    job.models = models
     job.status = "processing"
     job.completed = 0
     job.started_at = time.time()

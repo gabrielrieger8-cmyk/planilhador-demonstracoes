@@ -15,7 +15,10 @@ from pathlib import Path
 from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY
 from app.jobs import Job, JobProgress
 from app.services.classifier import classificar
-from app.services.gemini_client import extrair_balancete, extrair_demonstracao
+from app.services.gemini_client import (
+    extrair_balancete, extrair_demonstracao,
+    formatar_demonstracao_gemini, refinar_balancete_gemini,
+)
 from app.services.anthropic_client import formatar_demonstracao, refinar_balancete
 from app.services.validator import validate
 from app.services.exporter import export_excel_multi, export_csv
@@ -66,12 +69,17 @@ def _process_single_file(
     base_name = Path(file_info.name).stem
     custo_total = 0.0
 
-    # --- ETAPA 1: Classificação (Gemini 2.0 Flash) ---
+    # Modelos configurados pelo usuário
+    classifier_model = job.models.get("classifier")
+    extractor_model = job.models.get("extractor")
+    formatter_model = job.models.get("formatter")
+
+    # --- ETAPA 1: Classificação ---
     progress.stage = "classifying"
     progress.stage_detail = "Identificando demonstrações..."
     logger.info("[%s] Classificando documento...", file_info.name)
 
-    classificacao = classificar(pdf_path, api_key=GEMINI_API_KEY)
+    classificacao = classificar(pdf_path, api_key=GEMINI_API_KEY, model=classifier_model)
     demonstracoes = classificacao.get("demonstracoes", [])
     empresa = classificacao.get("empresa", "")
     custo_total += classificacao.get("custo_usd", 0)
@@ -84,7 +92,7 @@ def _process_single_file(
         "[%s] %d demonstração(ões): %s", file_info.name, len(demonstracoes), tipos
     )
 
-    # --- ETAPA 2+3: Extração (Gemini) + Formatação (Sonnet) por demonstração ---
+    # --- ETAPA 2+3: Extração + Formatação por demonstração ---
     resultados = []
     todas_observacoes = []
 
@@ -93,7 +101,7 @@ def _process_single_file(
         paginas = demo.get("paginas")
         periodo = demo.get("periodo", "")
 
-        # --- ETAPA 2: Extração via Gemini 2.5 Flash ---
+        # --- ETAPA 2: Extração ---
         progress.stage = "extracting"
         progress.stage_detail = f"Extraindo {tipo} ({i}/{len(demonstracoes)})"
         logger.info(
@@ -108,12 +116,14 @@ def _process_single_file(
                 pdf_path, paginas=paginas,
                 api_key=GEMINI_API_KEY,
                 on_progress=on_extract_progress,
+                model=extractor_model,
             )
         else:
             gemini_result = extrair_demonstracao(
                 pdf_path, tipo, paginas=paginas,
                 api_key=GEMINI_API_KEY,
                 on_progress=on_extract_progress,
+                model=extractor_model,
             )
 
         custo_total += gemini_result.custo_usd
@@ -122,22 +132,34 @@ def _process_single_file(
             todas_observacoes.append(f"[{tipo}] Extração falhou: {gemini_result.error}")
             continue
 
-        # --- ETAPA 3: Formatação via Sonnet ---
+        # --- ETAPA 3: Formatação ---
         progress.stage = "formatting"
         progress.stage_detail = f"Formatando {tipo} ({i}/{len(demonstracoes)})"
-        logger.info("[%s] Formatando %s com Sonnet...", file_info.name, tipo)
+        logger.info("[%s] Formatando %s com %s...", file_info.name, tipo, formatter_model)
+
+        is_gemini_formatter = formatter_model and formatter_model.startswith("gemini-")
 
         if tipo == "balancete":
-            sonnet_result = refinar_balancete(
-                gemini_result.text, api_key=ANTHROPIC_API_KEY
-            )
+            if is_gemini_formatter:
+                format_result = refinar_balancete_gemini(
+                    gemini_result.text, model=formatter_model, api_key=GEMINI_API_KEY
+                )
+            else:
+                format_result = refinar_balancete(
+                    gemini_result.text, api_key=ANTHROPIC_API_KEY, model=formatter_model
+                )
         else:
-            sonnet_result = formatar_demonstracao(
-                gemini_result.text, tipo, api_key=ANTHROPIC_API_KEY
-            )
+            if is_gemini_formatter:
+                format_result = formatar_demonstracao_gemini(
+                    gemini_result.text, tipo, model=formatter_model, api_key=GEMINI_API_KEY
+                )
+            else:
+                format_result = formatar_demonstracao(
+                    gemini_result.text, tipo, api_key=ANTHROPIC_API_KEY, model=formatter_model
+                )
 
-        dados = sonnet_result.get("dados", {})
-        custo_total += sonnet_result.get("custo_usd", 0)
+        dados = format_result.get("dados", {})
+        custo_total += format_result.get("custo_usd", 0)
 
         # Enriquece dados
         dados["empresa"] = empresa

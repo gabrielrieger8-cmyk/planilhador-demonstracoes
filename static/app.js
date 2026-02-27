@@ -3,6 +3,7 @@
 let jobId = null;
 let uploadedFiles = [];
 let eventSource = null;
+let modelDefaults = {};
 
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
@@ -11,6 +12,38 @@ const fileList = document.getElementById('file-list');
 const progressSection = document.getElementById('progress-section');
 const resultsSection = document.getElementById('results-section');
 const convertBtn = document.getElementById('convert-btn');
+
+// ---------------------------------------------------------------------------
+// Load available models
+// ---------------------------------------------------------------------------
+
+async function loadModels() {
+    try {
+        const resp = await fetch('/models');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        modelDefaults = data.defaults || {};
+
+        const stages = ['classifier', 'extractor', 'formatter'];
+        stages.forEach(stage => {
+            const select = document.getElementById(`model-${stage}`);
+            if (!select) return;
+            select.innerHTML = '';
+            const options = data[stage] || [];
+            options.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.label;
+                if (m.id === data.defaults[stage]) opt.selected = true;
+                select.appendChild(opt);
+            });
+        });
+    } catch (err) {
+        console.error('Erro ao carregar modelos:', err);
+    }
+}
+
+loadModels();
 
 // ---------------------------------------------------------------------------
 // Drop Zone
@@ -135,8 +168,19 @@ async function startProcessing() {
     convertBtn.disabled = true;
     convertBtn.textContent = 'Processando...';
 
+    // Coleta modelos selecionados
+    const models = {};
+    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+        const select = document.getElementById(`model-${stage}`);
+        if (select) models[stage] = select.value;
+    });
+
     try {
-        const resp = await fetch(`/process/${jobId}`, { method: 'POST' });
+        const resp = await fetch(`/process/${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(models),
+        });
         if (!resp.ok) {
             const err = await resp.json();
             alert(err.detail || 'Erro ao iniciar');
@@ -355,6 +399,12 @@ function resetApp() {
     document.getElementById('elapsed-timer').textContent = '0:00';
     document.getElementById('progress-details').innerHTML = '';
     document.getElementById('results-list').innerHTML = '';
+
+    // Restaura selects de modelo ao default
+    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+        const select = document.getElementById(`model-${stage}`);
+        if (select && modelDefaults[stage]) select.value = modelDefaults[stage];
+    });
 
     convertBtn.disabled = false;
     convertBtn.textContent = 'Gerar Demonstrações';

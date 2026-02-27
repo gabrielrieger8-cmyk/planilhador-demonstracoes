@@ -9,9 +9,9 @@
 
 Planilhador de Demonstrações converte PDFs de demonstrações financeiras (balancetes, DRE, balanço patrimonial) em planilhas Excel profissionais.
 
-**Pipeline**: PDF → Gemini 2.0 Flash (classifica) → Gemini 2.5 Flash (extrai) → Sonnet (formata) → Validação → Excel multi-aba + CSV
+**Pipeline**: PDF → Classificação → Extração → Formatação → Validação → Excel multi-aba + CSV
 
-**Princípio**: Gemini = "olhos" (lê o PDF). Sonnet = "cérebro" (entende e estrutura).
+**Modelos configuráveis por etapa** (default: Gemini 2.5 Flash para tudo). Opções: Gemini 2.0 Flash, Gemini 2.5 Flash, Haiku 4.5. O usuário escolhe via UI antes de processar.
 
 ## Estrutura do projeto
 

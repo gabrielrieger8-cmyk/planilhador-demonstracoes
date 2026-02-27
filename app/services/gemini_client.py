@@ -125,6 +125,7 @@ def _get_usage(response) -> tuple[int, int]:
 def classificar_documento(
     pdf_path: str,
     api_key: str | None = None,
+    model: str | None = None,
 ) -> dict:
     """Classifica um PDF usando Gemini 2.0 Flash.
 
@@ -135,6 +136,7 @@ def classificar_documento(
     """
     from google.genai import types
 
+    modelo = model or CLASSIFIER_MODEL
     client = _get_client(api_key)
     system_prompt = _load_prompt("system_classifier.txt")
 
@@ -143,7 +145,7 @@ def classificar_documento(
 
     response = _call_gemini(
         client,
-        model=CLASSIFIER_MODEL,
+        model=modelo,
         contents=[pdf_part, system_prompt],
         max_tokens=2000,
         temperature=0.1,
@@ -151,7 +153,7 @@ def classificar_documento(
 
     inp, out = _get_usage(response)
     custo = calcular_custo_gemini(
-        {"input_tokens": inp, "output_tokens": out}, CLASSIFIER_MODEL
+        {"input_tokens": inp, "output_tokens": out}, modelo
     )
 
     texto = response.text or ""
@@ -173,6 +175,7 @@ def extrair_balancete(
     paginas: list[int] | None = None,
     api_key: str | None = None,
     on_progress: callable | None = None,
+    model: str | None = None,
 ) -> GeminiResult:
     """Extrai dados de um balancete usando Gemini 2.5 Flash page-by-page.
 
@@ -187,6 +190,7 @@ def extrair_balancete(
     """
     from google.genai import types
 
+    modelo = model or EXTRACTOR_MODEL
     client = _get_client(api_key)
     base_prompt = _load_prompt("system_balancete_gemini.txt")
 
@@ -248,7 +252,7 @@ def extrair_balancete(
             batch_prompt += "\nNÃO inclua cabeçalho — apenas as linhas de dados."
 
         response = _call_gemini(
-            client, model=EXTRACTOR_MODEL,
+            client, model=modelo,
             contents=[pdf_part, batch_prompt],
             max_tokens=200000,
         )
@@ -260,7 +264,7 @@ def extrair_balancete(
 
         # Anti-truncamento
         batch_text = _handle_continuation(
-            client, pdf_part, batch_text, response, total_input, total_output
+            client, modelo, pdf_part, batch_text, response, total_input, total_output
         )
 
         all_results.append(batch_text)
@@ -275,7 +279,7 @@ def extrair_balancete(
     elapsed = time.time() - start_time
     custo = calcular_custo_gemini(
         {"input_tokens": total_input, "output_tokens": total_output},
-        EXTRACTOR_MODEL,
+        modelo,
     )
 
     logger.info(
@@ -303,6 +307,7 @@ def extrair_demonstracao(
     paginas: list[int] | None = None,
     api_key: str | None = None,
     on_progress: callable | None = None,
+    model: str | None = None,
 ) -> GeminiResult:
     """Extrai dados de DRE ou Balanço Patrimonial usando Gemini 2.5 Flash.
 
@@ -320,6 +325,7 @@ def extrair_demonstracao(
     """
     from google.genai import types
 
+    modelo = model or EXTRACTOR_MODEL
     client = _get_client(api_key)
     prompt = _load_prompt("system_demonstracao_gemini.txt")
 
@@ -341,7 +347,7 @@ def extrair_demonstracao(
     start_time = time.time()
 
     response = _call_gemini(
-        client, model=EXTRACTOR_MODEL,
+        client, model=modelo,
         contents=[pdf_part, prompt],
         max_tokens=200000,
     )
@@ -350,11 +356,11 @@ def extrair_demonstracao(
     inp, out = _get_usage(response)
 
     # Anti-truncamento
-    text = _handle_continuation(client, pdf_part, text, response, inp, out)
+    text = _handle_continuation(client, modelo, pdf_part, text, response, inp, out)
 
     elapsed = time.time() - start_time
     custo = calcular_custo_gemini(
-        {"input_tokens": inp, "output_tokens": out}, EXTRACTOR_MODEL
+        {"input_tokens": inp, "output_tokens": out}, modelo
     )
 
     logger.info(
@@ -373,11 +379,185 @@ def extrair_demonstracao(
 
 
 # ---------------------------------------------------------------------------
+# Formatação via Gemini (alternativa ao Anthropic)
+# ---------------------------------------------------------------------------
+
+def formatar_demonstracao_gemini(
+    texto_gemini: str,
+    tipo: str,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """Formata dados extraídos em JSON estruturado usando Gemini.
+
+    Alternativa ao Anthropic para a etapa de formatação.
+
+    Args:
+        texto_gemini: Texto bruto do Gemini (Markdown tables).
+        tipo: "dre" ou "balanco_patrimonial".
+        model: Modelo Gemini a usar.
+        api_key: Chave da API Gemini.
+
+    Returns:
+        Dict com: dados (JSON estruturado), custo_usd, usage.
+    """
+    from app.config import FORMATTER_MODEL
+
+    modelo = model or FORMATTER_MODEL
+    client = _get_client(api_key)
+
+    prompt_files = {
+        "dre": "system_dre_format.txt",
+        "balanco_patrimonial": "system_balanco_format.txt",
+    }
+    prompt_file = prompt_files.get(tipo)
+    if not prompt_file:
+        raise ValueError(f"Tipo não suportado para formatação: {tipo}")
+
+    system_prompt = _load_prompt(prompt_file)
+    user_msg = (
+        "Dados extraídos de um PDF (podem conter erros de extração):\n\n"
+        f"{texto_gemini}\n\n"
+        "Estruture esses dados conforme as instruções do sistema."
+    )
+
+    full_text = ""
+    total_input = 0
+    total_output = 0
+
+    for attempt in range(4):
+        if attempt == 0:
+            contents = [system_prompt, user_msg]
+        else:
+            contents = [
+                system_prompt,
+                user_msg,
+                full_text,
+                "Continue EXATAMENTE de onde parou. Não repita dados já extraídos.",
+            ]
+
+        response = _call_gemini(
+            client, model=modelo,
+            contents=contents,
+            max_tokens=200000,
+        )
+
+        texto_parte = response.text or ""
+        inp, out = _get_usage(response)
+        total_input += inp
+        total_output += out
+        full_text += texto_parte
+
+        finish_reason = None
+        if response.candidates and response.candidates[0].finish_reason:
+            finish_reason = str(response.candidates[0].finish_reason)
+
+        if not finish_reason or "MAX_TOKENS" not in finish_reason:
+            break
+
+        logger.warning(
+            "Formatação truncada (tentativa %d/3). Pedindo continuação...",
+            attempt + 1,
+        )
+
+    custo = calcular_custo_gemini(
+        {"input_tokens": total_input, "output_tokens": total_output}, modelo
+    )
+    dados = _robust_json_parse(full_text)
+
+    return {
+        "dados": dados,
+        "custo_usd": custo,
+        "usage": {"input_tokens": total_input, "output_tokens": total_output},
+    }
+
+
+def refinar_balancete_gemini(
+    csv_text: str,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """Refina dados de balancete usando Gemini.
+
+    Alternativa ao Anthropic para refinamento de balancetes.
+
+    Args:
+        csv_text: Texto Markdown com tabelas do balancete.
+        model: Modelo Gemini a usar.
+        api_key: Chave da API Gemini.
+
+    Returns:
+        Dict com: dados (JSON estruturado), custo_usd, usage.
+    """
+    from app.config import FORMATTER_MODEL
+
+    modelo = model or FORMATTER_MODEL
+    client = _get_client(api_key)
+
+    system_prompt = _load_prompt("system_balancete_refine.txt")
+    user_msg = (
+        "Dados de balancete extraídos de um PDF (tabela Markdown):\n\n"
+        f"{csv_text}\n\n"
+        "Refine e estruture esses dados conforme as instruções do sistema."
+    )
+
+    full_text = ""
+    total_input = 0
+    total_output = 0
+
+    for attempt in range(4):
+        if attempt == 0:
+            contents = [system_prompt, user_msg]
+        else:
+            contents = [
+                system_prompt,
+                user_msg,
+                full_text,
+                "Continue EXATAMENTE de onde parou. Não repita dados já extraídos.",
+            ]
+
+        response = _call_gemini(
+            client, model=modelo,
+            contents=contents,
+            max_tokens=200000,
+        )
+
+        texto_parte = response.text or ""
+        inp, out = _get_usage(response)
+        total_input += inp
+        total_output += out
+        full_text += texto_parte
+
+        finish_reason = None
+        if response.candidates and response.candidates[0].finish_reason:
+            finish_reason = str(response.candidates[0].finish_reason)
+
+        if not finish_reason or "MAX_TOKENS" not in finish_reason:
+            break
+
+        logger.warning(
+            "Refinamento truncado (tentativa %d/3). Pedindo continuação...",
+            attempt + 1,
+        )
+
+    custo = calcular_custo_gemini(
+        {"input_tokens": total_input, "output_tokens": total_output}, modelo
+    )
+    dados = _robust_json_parse(full_text)
+
+    return {
+        "dados": dados,
+        "custo_usd": custo,
+        "usage": {"input_tokens": total_input, "output_tokens": total_output},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 def _handle_continuation(
-    client, pdf_part, text: str, response, total_input: int, total_output: int
+    client, model: str, pdf_part, text: str, response, total_input: int, total_output: int
 ) -> str:
     """Detecta truncamento por MAX_TOKENS e pede continuação."""
     finish_reason = None
@@ -391,7 +571,7 @@ def _handle_continuation(
 
         logger.warning("Resposta truncada (continuação %d/%d)...", i + 1, max_continuations)
         cont_response = _call_gemini(
-            client, model=EXTRACTOR_MODEL,
+            client, model=model,
             contents=[
                 pdf_part,
                 "Continue EXATAMENTE de onde parou, sem repetir dados já enviados. "

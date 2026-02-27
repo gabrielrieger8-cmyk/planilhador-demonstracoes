@@ -10,7 +10,7 @@
     <div class="container">
         <header>
             <h1>Planilhador de Demonstrações</h1>
-            <p class="subtitle">PDF &rarr; Excel via Gemini + Anthropic</p>
+            <p class="subtitle">PDF &rarr; Excel via IA</p>
         </header>
 
         <!-- Upload -->
@@ -32,6 +32,26 @@
                     <span id="total-info"></span>
                 </div>
             </div>
+
+            <!-- Model Selection -->
+            <div class="model-config">
+                <h3>Modelos</h3>
+                <div class="model-grid">
+                    <div class="model-field">
+                        <label for="model-classifier">Classificação</label>
+                        <select id="model-classifier"></select>
+                    </div>
+                    <div class="model-field">
+                        <label for="model-extractor">Extração</label>
+                        <select id="model-extractor"></select>
+                    </div>
+                    <div class="model-field">
+                        <label for="model-formatter">Formatação</label>
+                        <select id="model-formatter"></select>
+                    </div>
+                </div>
+            </div>
+
             <button id="convert-btn" class="btn-primary" onclick="startProcessing()">
                 Gerar Demonstrações
             </button>

@@ -43,17 +43,20 @@ GEMINI_MODELS: dict[str, dict] = {
 }
 
 ANTHROPIC_MODELS: dict[str, dict] = {
-    "claude-sonnet-4-5-20250929": {
-        "label": "Sonnet 4.5",
-        "input_price": 3.0,
-        "output_price": 15.0,
+    "claude-haiku-4-5-20250929": {
+        "label": "Haiku 4.5",
+        "input_price": 0.80,
+        "output_price": 4.0,
     },
 }
 
-# Modelos usados em cada etapa do pipeline
-CLASSIFIER_MODEL = "gemini-2.0-flash"
+# Modelos usados em cada etapa do pipeline (defaults)
+CLASSIFIER_MODEL = "gemini-2.5-flash"
 EXTRACTOR_MODEL = "gemini-2.5-flash"
-FORMATTER_MODEL = "claude-sonnet-4-5-20250929"
+FORMATTER_MODEL = "gemini-2.5-flash"
+
+# Todos os modelos disponíveis (Gemini + Anthropic)
+ALL_MODELS: dict[str, dict] = {**GEMINI_MODELS, **ANTHROPIC_MODELS}
 
 
 def calcular_custo_gemini(usage: dict, modelo: str) -> float:
