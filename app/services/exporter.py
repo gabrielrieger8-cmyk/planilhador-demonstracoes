@@ -350,12 +350,19 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
     ws.append([])
 
     def _write_section(title: str, section: dict):
-        ws.append([title])
+        total = section.get("total", 0) or 0
+        ws.append([title, total])
         row_num = ws.max_row
         ws.cell(row=row_num, column=1).font = Font(
             name="Calibri", bold=True, size=13, color="2F5496",
         )
-        ws.merge_cells(start_row=row_num, start_column=1, end_row=row_num, end_column=2)
+        ws.cell(row=row_num, column=2).font = Font(
+            name="Calibri", bold=True, size=13, color="2F5496",
+        )
+        ws.cell(row=row_num, column=2).number_format = BR_NUMBER_FORMAT
+        ws.cell(row=row_num, column=2).alignment = RIGHT_ALIGN
+        ws.cell(row=row_num, column=1).border = THIN_BORDER
+        ws.cell(row=row_num, column=2).border = THIN_BORDER
 
         for sub_key in ("circulante", "nao_circulante"):
             sub = section.get(sub_key, {})
@@ -363,8 +370,17 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                 continue
 
             sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
-            ws.append([f"  {sub_title}"])
-            ws.cell(row=ws.max_row, column=1).font = AGRUPADORA_FONT
+            sub_total = sub.get("total", 0) or 0
+            ws.append([f"  {sub_title}", sub_total])
+            sub_row = ws.max_row
+            ws.cell(row=sub_row, column=1).font = AGRUPADORA_FONT
+            ws.cell(row=sub_row, column=1).fill = AGRUPADORA_FILL
+            ws.cell(row=sub_row, column=1).border = THIN_BORDER
+            ws.cell(row=sub_row, column=2).font = AGRUPADORA_FONT
+            ws.cell(row=sub_row, column=2).fill = AGRUPADORA_FILL
+            ws.cell(row=sub_row, column=2).number_format = BR_NUMBER_FORMAT
+            ws.cell(row=sub_row, column=2).alignment = RIGHT_ALIGN
+            ws.cell(row=sub_row, column=2).border = THIN_BORDER
 
             for conta in sub.get("contas", []):
                 nivel = conta.get("nivel", 3)
@@ -382,57 +398,39 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                         cell.number_format = BR_NUMBER_FORMAT
                         cell.alignment = RIGHT_ALIGN
 
-            sub_total = sub.get("total", 0) or 0
-            ws.append([f"  Total {sub_title}", sub_total])
-            for c in range(1, 3):
-                cell = ws.cell(row=ws.max_row, column=c)
-                cell.font = AGRUPADORA_FONT
-                cell.fill = AGRUPADORA_FILL
-                cell.border = THIN_BORDER
-                if c == 2:
-                    cell.number_format = BR_NUMBER_FORMAT
-                    cell.alignment = RIGHT_ALIGN
-
-        total = section.get("total", 0) or 0
-        ws.append([f"TOTAL {title.upper()}", total])
-        for c in range(1, 3):
-            cell = ws.cell(row=ws.max_row, column=c)
-            cell.font = Font(name="Calibri", bold=True, size=12)
-            cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
-            cell.border = THIN_BORDER
-            if c == 2:
-                cell.number_format = BR_NUMBER_FORMAT
-                cell.alignment = RIGHT_ALIGN
-
         ws.append([])
 
     _write_section("ATIVO", dados.get("ativo", {}))
     _write_section("PASSIVO", dados.get("passivo", {}))
 
     pl = dados.get("patrimonio_liquido", {})
-    ws.append(["PATRIMÔNIO LÍQUIDO"])
-    ws.cell(row=ws.max_row, column=1).font = Font(
+    total_pl = pl.get("total", 0) or 0
+    ws.append(["PATRIMÔNIO LÍQUIDO", total_pl])
+    pl_row = ws.max_row
+    ws.cell(row=pl_row, column=1).font = Font(
         name="Calibri", bold=True, size=13, color="2F5496",
     )
-    ws.merge_cells(start_row=ws.max_row, start_column=1, end_row=ws.max_row, end_column=2)
+    ws.cell(row=pl_row, column=2).font = Font(
+        name="Calibri", bold=True, size=13, color="2F5496",
+    )
+    ws.cell(row=pl_row, column=2).number_format = BR_NUMBER_FORMAT
+    ws.cell(row=pl_row, column=2).alignment = RIGHT_ALIGN
+    ws.cell(row=pl_row, column=1).border = THIN_BORDER
+    ws.cell(row=pl_row, column=2).border = THIN_BORDER
 
     for conta in pl.get("contas", []):
+        is_sub = conta.get("is_subtotal", False)
         ws.append([f"  {conta.get('descricao', '')}", conta.get("valor", 0)])
-        ws.cell(row=ws.max_row, column=2).number_format = BR_NUMBER_FORMAT
-        ws.cell(row=ws.max_row, column=2).alignment = RIGHT_ALIGN
+        current_row = ws.max_row
         for c in range(1, 3):
-            ws.cell(row=ws.max_row, column=c).border = THIN_BORDER
-
-    total_pl = pl.get("total", 0) or 0
-    ws.append(["TOTAL PATRIMÔNIO LÍQUIDO", total_pl])
-    for c in range(1, 3):
-        cell = ws.cell(row=ws.max_row, column=c)
-        cell.font = Font(name="Calibri", bold=True, size=12)
-        cell.fill = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
-        cell.border = THIN_BORDER
-        if c == 2:
-            cell.number_format = BR_NUMBER_FORMAT
-            cell.alignment = RIGHT_ALIGN
+            cell = ws.cell(row=current_row, column=c)
+            cell.border = THIN_BORDER
+            if is_sub:
+                cell.font = AGRUPADORA_FONT
+                cell.fill = AGRUPADORA_FILL
+            if c == 2:
+                cell.number_format = BR_NUMBER_FORMAT
+                cell.alignment = RIGHT_ALIGN
 
     ws.append([])
 
