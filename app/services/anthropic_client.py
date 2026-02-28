@@ -79,7 +79,7 @@ def classificar_documento_anthropic(
     pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
     def _call():
-        return client.messages.create(
+        return client.messages.stream(
             model=modelo,
             max_tokens=2000,
             system=system_prompt,
@@ -99,7 +99,9 @@ def classificar_documento_anthropic(
             }],
         )
 
-    response = _call_with_retry(_call)
+    stream_ctx = _call_with_retry(_call)
+    with stream_ctx as stream:
+        response = stream.get_final_message()
     texto = response.content[0].text
     custo = calcular_custo_anthropic(response.usage, modelo)
 
@@ -169,7 +171,7 @@ def extrair_balancete_anthropic(
             batch_prompt += "\nNÃO inclua cabeçalho — apenas as linhas de dados."
 
         def _call(b64=pdf_b64, prompt=batch_prompt):
-            return client.messages.create(
+            return client.messages.stream(
                 model=modelo,
                 max_tokens=64000,
                 system=prompt,
@@ -189,7 +191,9 @@ def extrair_balancete_anthropic(
                 }],
             )
 
-        response = _call_with_retry(_call)
+        stream_ctx = _call_with_retry(_call)
+        with stream_ctx as stream:
+            response = stream.get_final_message()
         batch_text = response.content[0].text
         total_custo += calcular_custo_anthropic(response.usage, modelo)
         total_input += response.usage.input_tokens
@@ -255,7 +259,7 @@ def extrair_demonstracao_anthropic(
     start_time = time.time()
 
     def _call():
-        return client.messages.create(
+        return client.messages.stream(
             model=modelo,
             max_tokens=64000,
             system=prompt,
@@ -275,7 +279,9 @@ def extrair_demonstracao_anthropic(
             }],
         )
 
-    response = _call_with_retry(_call)
+    stream_ctx = _call_with_retry(_call)
+    with stream_ctx as stream:
+        response = stream.get_final_message()
     text = response.content[0].text
     custo = calcular_custo_anthropic(response.usage, modelo)
     elapsed = time.time() - start_time
