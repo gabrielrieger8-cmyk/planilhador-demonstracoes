@@ -254,7 +254,7 @@ def extrair_balancete(
         response = _call_gemini(
             client, model=modelo,
             contents=[pdf_part, batch_prompt],
-            max_tokens=200000,
+            max_tokens=65000,
         )
 
         batch_text = response.text or ""
@@ -349,7 +349,7 @@ def extrair_demonstracao(
     response = _call_gemini(
         client, model=modelo,
         contents=[pdf_part, prompt],
-        max_tokens=200000,
+        max_tokens=65000,
     )
 
     text = response.text or ""
@@ -558,7 +558,7 @@ def _handle_continuation(
                 "Continue EXATAMENTE de onde parou, sem repetir dados já enviados. "
                 "Mantenha o mesmo formato.",
             ],
-            max_tokens=200000,
+            max_tokens=65000,
         )
         cont_text = cont_response.text or ""
         text += "\n" + cont_text
