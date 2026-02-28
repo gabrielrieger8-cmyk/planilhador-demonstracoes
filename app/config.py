@@ -43,7 +43,7 @@ GEMINI_MODELS: dict[str, dict] = {
 }
 
 ANTHROPIC_MODELS: dict[str, dict] = {
-    "claude-haiku-4-5-20250929": {
+    "claude-haiku-4-5-20251001": {
         "label": "Haiku 4.5",
         "input_price": 0.80,
         "output_price": 4.0,
