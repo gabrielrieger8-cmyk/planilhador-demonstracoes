@@ -102,17 +102,13 @@ async def index():
 @app.get("/models")
 async def get_models():
     """Retorna modelos disponíveis para cada etapa do pipeline."""
-    gemini_options = [
-        {"id": mid, "label": info["label"]}
-        for mid, info in GEMINI_MODELS.items()
-    ]
     all_options = [
         {"id": mid, "label": info["label"]}
         for mid, info in ALL_MODELS.items()
     ]
     return {
-        "classifier": gemini_options,
-        "extractor": gemini_options,
+        "classifier": all_options,
+        "extractor": all_options,
         "formatter": all_options,
         "defaults": {
             "classifier": CLASSIFIER_MODEL,

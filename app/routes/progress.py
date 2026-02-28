@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.config import (
-    GEMINI_API_KEY, ANTHROPIC_API_KEY, ALL_MODELS, GEMINI_MODELS,
+    GEMINI_API_KEY, ANTHROPIC_API_KEY, ALL_MODELS,
     CLASSIFIER_MODEL, EXTRACTOR_MODEL, FORMATTER_MODEL, logger,
 )
 from app.jobs import JobProgress, jobs
@@ -52,10 +52,6 @@ async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest())
     for stage, model_id in models.items():
         if model_id not in ALL_MODELS:
             raise HTTPException(400, f"Modelo inválido para {stage}: {model_id}")
-    # Classificação e extração só aceitam modelos Gemini (usam API Gemini)
-    for stage in ("classifier", "extractor"):
-        if models[stage] not in GEMINI_MODELS:
-            raise HTTPException(400, f"{stage} só aceita modelos Gemini, recebeu: {models[stage]}")
 
     # Verifica se Anthropic API key está configurada quando necessário
     needs_anthropic = any(

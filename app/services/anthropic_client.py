@@ -1,18 +1,20 @@
-"""Cliente Anthropic: formata e refina dados extraídos pelo Gemini.
+"""Cliente Anthropic: classificação, extração e formatação via Claude.
 
-Recebe texto bruto do Gemini e estrutura em JSON.
-Único uso de Anthropic no projeto.
+Suporta todas as etapas do pipeline usando modelos Anthropic (Haiku, etc).
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import anthropic
+import fitz
 
 from app.config import ANTHROPIC_API_KEY, FORMATTER_MODEL, calcular_custo_anthropic
 
@@ -52,6 +54,264 @@ def _call_with_retry(fn, max_retries: int = 5):
             else:
                 raise
 
+
+# ---------------------------------------------------------------------------
+# Classificação via Anthropic
+# ---------------------------------------------------------------------------
+
+def classificar_documento_anthropic(
+    pdf_path: str,
+    model: str | None = None,
+    api_key: str | None = None,
+) -> dict:
+    """Classifica um PDF usando modelo Anthropic.
+
+    Envia o PDF como documento base64 e identifica demonstrações presentes.
+
+    Returns:
+        Dict com: empresa, demonstracoes, confianca, custo_usd, usage.
+    """
+    modelo = model or FORMATTER_MODEL
+    client = anthropic.Anthropic(api_key=api_key or ANTHROPIC_API_KEY)
+
+    system_prompt = _load_prompt("system_classifier.txt")
+    pdf_bytes = Path(pdf_path).read_bytes()
+    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+    def _call():
+        return client.messages.create(
+            model=modelo,
+            max_tokens=2000,
+            system=system_prompt,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": pdf_b64,
+                        },
+                    },
+                    {"type": "text", "text": "Classifique este documento conforme as instruções."},
+                ],
+            }],
+        )
+
+    response = _call_with_retry(_call)
+    texto = response.content[0].text
+    custo = calcular_custo_anthropic(response.usage, modelo)
+
+    dados = _robust_json_parse(texto)
+    return {
+        **dados,
+        "custo_usd": custo,
+        "usage": {
+            "input_tokens": response.usage.input_tokens,
+            "output_tokens": response.usage.output_tokens,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# Extração via Anthropic
+# ---------------------------------------------------------------------------
+
+def extrair_balancete_anthropic(
+    pdf_path: str,
+    paginas: list[int] | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    on_progress: callable | None = None,
+) -> dict:
+    """Extrai dados de balancete usando modelo Anthropic (page-by-page).
+
+    Returns:
+        Dict com: text, custo_usd, success, pages_processed.
+    """
+    modelo = model or FORMATTER_MODEL
+    client = anthropic.Anthropic(api_key=api_key or ANTHROPIC_API_KEY)
+
+    base_prompt = _load_prompt("system_balancete_gemini.txt")
+    path = Path(pdf_path)
+    doc = fitz.open(str(path))
+    total_pages = len(doc)
+
+    if paginas:
+        pages_to_process = sorted(p for p in paginas if 1 <= p <= total_pages)
+    else:
+        pages_to_process = list(range(1, total_pages + 1))
+    doc.close()
+
+    start_time = time.time()
+    all_results: list[str] = []
+    total_input = 0
+    total_output = 0
+    total_custo = 0.0
+    is_first = True
+
+    for batch_idx, page_num in enumerate(pages_to_process):
+        if on_progress:
+            on_progress(
+                f"Extraindo página {page_num}/{pages_to_process[-1]} "
+                f"(lote {batch_idx + 1}/{len(pages_to_process)})"
+            )
+
+        pdf_bytes = _extract_page_range_bytes(str(path), page_num, page_num)
+        pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+        batch_prompt = base_prompt
+        if is_first:
+            batch_prompt += "\nInclua o cabeçalho da tabela (nomes das colunas) como primeira linha."
+            is_first = False
+        else:
+            batch_prompt += "\nNÃO inclua cabeçalho — apenas as linhas de dados."
+
+        def _call(b64=pdf_b64, prompt=batch_prompt):
+            return client.messages.create(
+                model=modelo,
+                max_tokens=64000,
+                system=prompt,
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "application/pdf",
+                                "data": b64,
+                            },
+                        },
+                        {"type": "text", "text": "Extraia os dados desta página conforme as instruções."},
+                    ],
+                }],
+            )
+
+        response = _call_with_retry(_call)
+        batch_text = response.content[0].text
+        total_custo += calcular_custo_anthropic(response.usage, modelo)
+        total_input += response.usage.input_tokens
+        total_output += response.usage.output_tokens
+        all_results.append(batch_text)
+
+        logger.info(
+            "Lote %d/%d: %d linhas (página %d)",
+            batch_idx + 1, len(pages_to_process),
+            len([l for l in batch_text.split("\n") if "|" in l]),
+            page_num,
+        )
+
+    combined = "\n".join(all_results)
+    elapsed = time.time() - start_time
+
+    logger.info(
+        "Balancete extraído (Anthropic): %d páginas em %.1fs, custo=$%.4f",
+        len(pages_to_process), elapsed, total_custo,
+    )
+
+    # Retorna no mesmo formato que GeminiResult para compatibilidade
+    from app.services.gemini_client import GeminiResult
+    return GeminiResult(
+        text=combined,
+        pages_processed=len(pages_to_process),
+        input_tokens=total_input,
+        output_tokens=total_output,
+        processing_time=elapsed,
+        custo_usd=total_custo,
+    )
+
+
+def extrair_demonstracao_anthropic(
+    pdf_path: str,
+    tipo: str,
+    paginas: list[int] | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    on_progress: callable | None = None,
+) -> dict:
+    """Extrai dados de DRE ou Balanço Patrimonial usando modelo Anthropic.
+
+    Returns:
+        GeminiResult com texto extraído.
+    """
+    modelo = model or FORMATTER_MODEL
+    client = anthropic.Anthropic(api_key=api_key or ANTHROPIC_API_KEY)
+
+    prompt = _load_prompt("system_demonstracao_gemini.txt")
+    path = Path(pdf_path)
+
+    if paginas:
+        pdf_bytes = _extract_page_range_bytes(str(path), min(paginas), max(paginas))
+    else:
+        pdf_bytes = path.read_bytes()
+
+    pdf_b64 = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+
+    if on_progress:
+        on_progress(f"Extraindo {tipo} ({len(paginas or [])} páginas)")
+
+    start_time = time.time()
+
+    def _call():
+        return client.messages.create(
+            model=modelo,
+            max_tokens=64000,
+            system=prompt,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": pdf_b64,
+                        },
+                    },
+                    {"type": "text", "text": "Extraia os dados desta demonstração conforme as instruções."},
+                ],
+            }],
+        )
+
+    response = _call_with_retry(_call)
+    text = response.content[0].text
+    custo = calcular_custo_anthropic(response.usage, modelo)
+    elapsed = time.time() - start_time
+
+    logger.info("%s extraído (Anthropic) em %.1fs, custo=$%.4f", tipo, elapsed, custo)
+
+    from app.services.gemini_client import GeminiResult
+    return GeminiResult(
+        text=text,
+        pages_processed=len(paginas) if paginas else 0,
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+        processing_time=elapsed,
+        custo_usd=custo,
+    )
+
+
+def _extract_page_range_bytes(file_path: str, page_start: int, page_end: int) -> bytes:
+    """Extrai intervalo de páginas como bytes de sub-PDF."""
+    src = fitz.open(file_path)
+    total = len(src)
+    if page_start == 1 and page_end >= total:
+        pdf_bytes = src.tobytes()
+        src.close()
+        return pdf_bytes
+    dst = fitz.open()
+    dst.insert_pdf(src, from_page=page_start - 1, to_page=page_end - 1)
+    pdf_bytes = dst.tobytes()
+    dst.close()
+    src.close()
+    return pdf_bytes
+
+
+# ---------------------------------------------------------------------------
+# Formatação via Anthropic
+# ---------------------------------------------------------------------------
 
 def formatar_demonstracao(
     texto_gemini: str,

@@ -1,7 +1,6 @@
 """Serviço de classificação de documentos contábeis.
 
-Usa Gemini 2.0 Flash para classificar o tipo do documento e identificar
-quais páginas contêm demonstrações financeiras úteis.
+Roteia entre Gemini e Anthropic conforme o modelo selecionado.
 """
 
 from __future__ import annotations
@@ -9,6 +8,7 @@ from __future__ import annotations
 import logging
 
 from app.services.gemini_client import classificar_documento
+from app.services.anthropic_client import classificar_documento_anthropic
 
 logger = logging.getLogger("planilhador")
 
@@ -18,18 +18,20 @@ TIPOS_VALIDOS = {"balancete", "balanco_patrimonial", "dre"}
 def classificar(pdf_path: str, api_key: str | None = None, model: str | None = None) -> dict:
     """Classifica um documento PDF e identifica demonstrações presentes.
 
-    Envia o PDF completo para Gemini 2.0 Flash, que identifica todas
-    as demonstrações e suas respectivas páginas.
+    Roteia para Gemini ou Anthropic conforme o prefixo do modelo.
 
     Args:
         pdf_path: Caminho para o arquivo PDF.
-        api_key: Chave da API Gemini.
+        api_key: Chave da API.
+        model: Modelo a usar (gemini-* ou claude-*).
 
     Returns:
         Dict com: empresa, demonstracoes (list), custo_usd.
-        Cada demonstracao tem: tipo, paginas (list[int]), periodo.
     """
-    resultado = classificar_documento(pdf_path, api_key=api_key, model=model)
+    if model and model.startswith("claude-"):
+        resultado = classificar_documento_anthropic(pdf_path, model=model, api_key=api_key)
+    else:
+        resultado = classificar_documento(pdf_path, api_key=api_key, model=model)
 
     confianca = resultado.get("confianca", 0.0)
     demonstracoes = resultado.get("demonstracoes", [])
