@@ -22,7 +22,7 @@ from app.services.anthropic_client import (
     extrair_balancete_anthropic, extrair_demonstracao_anthropic,
 )
 from app.services.validator import validate
-from app.services.exporter import export_excel_multi, export_csv
+from app.services.exporter import export_excel_multi, export_csv, export_raw_excel, export_raw_csv
 
 logger = logging.getLogger("planilhador")
 
@@ -239,16 +239,16 @@ def _process_single_file(
     logger.info("[%s] Exportando...", file_info.name)
 
     if job.skip_format:
-        # Exporta texto bruto da extração
+        # Exporta extração bruta como Excel + CSV
+        xlsx_path = output_dir / f"{base_name}.xlsx"
+        export_raw_excel(resultados, empresa, xlsx_path)
+        progress.output_files.append(xlsx_path.name)
+
         for r in resultados:
-            txt_name = f"{base_name}_{r['tipo']}.txt"
-            txt_path = output_dir / txt_name
-            txt_path.write_text(r["raw_text"], encoding="utf-8")
-            progress.output_files.append(txt_name)
-        logger.info(
-            "[%s] Exportado texto bruto: %d arquivo(s)",
-            file_info.name, len(resultados),
-        )
+            csv_name = f"{base_name}_{r['tipo']}.csv"
+            csv_path = output_dir / csv_name
+            export_raw_csv(r["raw_text"], csv_path)
+            progress.output_files.append(csv_name)
     else:
         xlsx_path = output_dir / f"{base_name}.xlsx"
         export_excel_multi(resultados, empresa, xlsx_path)

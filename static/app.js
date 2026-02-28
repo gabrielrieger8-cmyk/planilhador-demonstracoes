@@ -501,7 +501,6 @@ function renderResults(data) {
         else if (f.name.includes('balanco')) { badgeClass = 'bp'; badgeLabel = 'BP'; }
         else if (f.name.includes('balancete')) { badgeClass = 'balancete'; badgeLabel = 'Balancete'; }
         else if (f.type === 'xlsx') { badgeClass = 'xlsx'; badgeLabel = 'XLSX'; }
-        else if (f.type === 'txt') { badgeClass = 'txt'; badgeLabel = 'TXT'; }
 
         div.innerHTML = `
             <span class="file-icon">📊</span>

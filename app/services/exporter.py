@@ -475,3 +475,113 @@ def _export_balanco_csv(dados: dict, output_path: Path) -> Path:
 
     logger.info("CSV balanço gerado: %s", output_path)
     return output_path
+
+
+# ---------------------------------------------------------------------------
+# Exportação bruta (sem formatação IA)
+# ---------------------------------------------------------------------------
+
+def _parse_pipe_table(raw_text: str) -> list[list[str]]:
+    """Parseia texto pipe-separated da extração em lista de linhas/colunas."""
+    rows = []
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Pula linhas separadoras (---|---|---)
+        if re.match(r'^[\s|:-]+$', line):
+            continue
+        if '|' in line:
+            cells = [c.strip() for c in line.split('|')]
+            # Remove células vazias das bordas (|col1|col2| → ['', 'col1', 'col2', ''])
+            if cells and cells[0] == '':
+                cells = cells[1:]
+            if cells and cells[-1] == '':
+                cells = cells[:-1]
+            rows.append(cells)
+        else:
+            rows.append([line])
+    return rows
+
+
+def export_raw_csv(raw_text: str, output_path: Path) -> Path:
+    """Exporta texto bruto pipe-separated como CSV."""
+    rows = _parse_pipe_table(raw_text)
+
+    with open(str(output_path), "w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f, delimiter=";")
+        for row in rows:
+            writer.writerow(row)
+
+    logger.info("CSV bruto gerado: %s (%d linhas)", output_path, len(rows))
+    return output_path
+
+
+def export_raw_excel(
+    demonstracoes: list[dict],
+    empresa: str,
+    output_path: Path,
+) -> Path:
+    """Exporta textos brutos pipe-separated como Excel multi-aba."""
+    wb = Workbook()
+    default_ws = wb.active
+
+    for i, demo in enumerate(demonstracoes):
+        tipo = demo["tipo"]
+        periodo = demo.get("periodo", "")
+        raw_text = demo.get("raw_text", "")
+
+        tab_name = _sanitize_tab_name(_build_title(empresa, tipo, periodo))
+
+        if i == 0:
+            default_ws.title = tab_name
+            ws = default_ws
+        else:
+            ws = wb.create_sheet(title=tab_name)
+
+        rows = _parse_pipe_table(raw_text)
+        if not rows:
+            continue
+
+        # Header
+        titulo = _build_title(empresa, tipo, periodo)
+        ws.append([titulo])
+        num_cols = max(len(r) for r in rows)
+        if num_cols > 1:
+            ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
+        ws["A1"].font = Font(name="Calibri", bold=True, size=14)
+        ws.append([])
+
+        # Primeira linha da tabela como cabeçalho
+        header_row_num = ws.max_row + 1
+        ws.append(rows[0])
+        for col_idx in range(len(rows[0])):
+            cell = ws.cell(row=header_row_num, column=col_idx + 1)
+            cell.font = HEADER_FONT
+            cell.fill = HEADER_FILL
+            cell.alignment = HEADER_ALIGN
+            cell.border = THIN_BORDER
+
+        # Dados
+        for row in rows[1:]:
+            ws.append(row)
+            current_row = ws.max_row
+            for col_idx in range(len(row)):
+                cell = ws.cell(row=current_row, column=col_idx + 1)
+                cell.border = THIN_BORDER
+                cell.font = NORMAL_FONT
+
+        # Auto-width
+        for col_idx in range(num_cols):
+            max_len = 0
+            col_letter = get_column_letter(col_idx + 1)
+            for row in rows:
+                if col_idx < len(row):
+                    max_len = max(max_len, len(str(row[col_idx])))
+            ws.column_dimensions[col_letter].width = min(max_len + 4, 50)
+
+        ws.freeze_panes = f"A{header_row_num + 1}"
+
+    wb.save(str(output_path))
+    logger.info("Excel bruto gerado: %s (%d aba(s))", output_path, len(demonstracoes))
+    return output_path

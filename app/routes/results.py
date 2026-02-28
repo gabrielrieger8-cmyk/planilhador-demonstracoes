@@ -27,7 +27,7 @@ async def results(job_id: str):
     output_files = []
     if job.output_dir and job.output_dir.exists():
         for f in sorted(job.output_dir.iterdir()):
-            if f.suffix.lower() in (".csv", ".xlsx", ".txt"):
+            if f.suffix.lower() in (".csv", ".xlsx"):
                 ext = f.suffix.lower().lstrip(".")
                 output_files.append({
                     "name": f.name,
@@ -61,7 +61,6 @@ async def download(job_id: str, filename: str):
     media_types = {
         ".csv": "text/csv",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".txt": "text/plain",
     }
     media_type = media_types.get(file_path.suffix.lower(), "application/octet-stream")
 
@@ -81,7 +80,7 @@ async def download_all(job_id: str):
 
     output_files = [
         f for f in job.output_dir.iterdir()
-        if f.suffix.lower() in (".csv", ".xlsx", ".txt")
+        if f.suffix.lower() in (".csv", ".xlsx")
     ]
     if not output_files:
         raise HTTPException(404, "Nenhum arquivo gerado.")
