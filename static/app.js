@@ -74,7 +74,7 @@ async function updateEstimate() {
 
         const el = document.getElementById('cost-estimate');
         const val = document.getElementById('cost-estimate-value');
-        val.textContent = '$' + data.total.toFixed(4);
+        val.textContent = formatBRL(data.total);
         el.classList.remove('hidden');
     } catch (err) {
         console.error('Erro ao estimar custo:', err);
@@ -322,7 +322,7 @@ function renderProgress(data) {
                 <span class="done-info">
                     <span>${p.time.toFixed(1)}s</span>
                     <span>·</span>
-                    <span>$${p.cost.toFixed(4)}</span>
+                    <span>${formatBRL(p.cost)}</span>
                 </span>
             `;
         } else if (p.status === 'error') {
@@ -370,18 +370,18 @@ function renderResults(data) {
         costHtml = `
             <span class="result-stat">
                 <span class="label">Orcado:</span>
-                <span class="value">$${estimatedCost.toFixed(4)}</span>
+                <span class="value">${formatBRL(estimatedCost)}</span>
             </span>
             <span class="result-stat">
                 <span class="label">Realizado:</span>
-                <span class="value">$${data.total_cost.toFixed(4)}</span>
+                <span class="value">${formatBRL(data.total_cost)}</span>
             </span>
         `;
     } else {
         costHtml = `
             <span class="result-stat">
                 <span class="label">Custo:</span>
-                <span class="value">$${data.total_cost.toFixed(4)}</span>
+                <span class="value">${formatBRL(data.total_cost)}</span>
             </span>
         `;
     }
@@ -479,6 +479,13 @@ function resetApp() {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
+
+const USD_BRL = 5.80;
+
+function formatBRL(usd) {
+    const brl = usd * USD_BRL;
+    return 'R$ ' + brl.toFixed(2).replace('.', ',');
+}
 
 function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';
