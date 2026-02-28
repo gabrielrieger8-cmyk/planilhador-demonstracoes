@@ -382,6 +382,61 @@ def extrair_demonstracao(
 # Formatação via Gemini (alternativa ao Anthropic)
 # ---------------------------------------------------------------------------
 
+def _gemini_format_with_continuation(
+    client, modelo: str, system_prompt: str, user_msg: str, max_continuations: int = 2,
+) -> tuple[str, int, int]:
+    """Chama Gemini para formatação com suporte a continuação leve.
+
+    Em vez de reenviar o texto completo acumulado (que explode o contexto),
+    envia apenas as últimas linhas como referência para continuação.
+
+    Returns:
+        (full_text, total_input_tokens, total_output_tokens)
+    """
+    full_text = ""
+    total_input = 0
+    total_output = 0
+
+    for attempt in range(1 + max_continuations):
+        if attempt == 0:
+            contents = [system_prompt, user_msg]
+        else:
+            # Envia só as últimas linhas como contexto (não o texto todo)
+            tail = "\n".join(full_text.split("\n")[-20:])
+            contents = [
+                system_prompt,
+                user_msg,
+                f"Sua resposta anterior terminou assim:\n```\n{tail}\n```\n"
+                "Continue EXATAMENTE de onde parou. Não repita dados já enviados.",
+            ]
+
+        response = _call_gemini(
+            client, model=modelo,
+            contents=contents,
+            max_tokens=200000,
+        )
+
+        texto_parte = response.text or ""
+        inp, out = _get_usage(response)
+        total_input += inp
+        total_output += out
+        full_text += texto_parte
+
+        finish_reason = None
+        if response.candidates and response.candidates[0].finish_reason:
+            finish_reason = str(response.candidates[0].finish_reason)
+
+        if not finish_reason or "MAX_TOKENS" not in finish_reason:
+            break
+
+        logger.warning(
+            "Formatação truncada (continuação %d/%d)...",
+            attempt + 1, max_continuations,
+        )
+
+    return full_text, total_input, total_output
+
+
 def formatar_demonstracao_gemini(
     texto_gemini: str,
     tipo: str,
@@ -389,8 +444,6 @@ def formatar_demonstracao_gemini(
     api_key: str | None = None,
 ) -> dict:
     """Formata dados extraídos em JSON estruturado usando Gemini.
-
-    Alternativa ao Anthropic para a etapa de formatação.
 
     Args:
         texto_gemini: Texto bruto do Gemini (Markdown tables).
@@ -421,44 +474,9 @@ def formatar_demonstracao_gemini(
         "Estruture esses dados conforme as instruções do sistema."
     )
 
-    full_text = ""
-    total_input = 0
-    total_output = 0
-
-    for attempt in range(4):
-        if attempt == 0:
-            contents = [system_prompt, user_msg]
-        else:
-            contents = [
-                system_prompt,
-                user_msg,
-                full_text,
-                "Continue EXATAMENTE de onde parou. Não repita dados já extraídos.",
-            ]
-
-        response = _call_gemini(
-            client, model=modelo,
-            contents=contents,
-            max_tokens=200000,
-        )
-
-        texto_parte = response.text or ""
-        inp, out = _get_usage(response)
-        total_input += inp
-        total_output += out
-        full_text += texto_parte
-
-        finish_reason = None
-        if response.candidates and response.candidates[0].finish_reason:
-            finish_reason = str(response.candidates[0].finish_reason)
-
-        if not finish_reason or "MAX_TOKENS" not in finish_reason:
-            break
-
-        logger.warning(
-            "Formatação truncada (tentativa %d/3). Pedindo continuação...",
-            attempt + 1,
-        )
+    full_text, total_input, total_output = _gemini_format_with_continuation(
+        client, modelo, system_prompt, user_msg,
+    )
 
     custo = calcular_custo_gemini(
         {"input_tokens": total_input, "output_tokens": total_output}, modelo
@@ -478,8 +496,6 @@ def refinar_balancete_gemini(
     api_key: str | None = None,
 ) -> dict:
     """Refina dados de balancete usando Gemini.
-
-    Alternativa ao Anthropic para refinamento de balancetes.
 
     Args:
         csv_text: Texto Markdown com tabelas do balancete.
@@ -501,44 +517,9 @@ def refinar_balancete_gemini(
         "Refine e estruture esses dados conforme as instruções do sistema."
     )
 
-    full_text = ""
-    total_input = 0
-    total_output = 0
-
-    for attempt in range(4):
-        if attempt == 0:
-            contents = [system_prompt, user_msg]
-        else:
-            contents = [
-                system_prompt,
-                user_msg,
-                full_text,
-                "Continue EXATAMENTE de onde parou. Não repita dados já extraídos.",
-            ]
-
-        response = _call_gemini(
-            client, model=modelo,
-            contents=contents,
-            max_tokens=200000,
-        )
-
-        texto_parte = response.text or ""
-        inp, out = _get_usage(response)
-        total_input += inp
-        total_output += out
-        full_text += texto_parte
-
-        finish_reason = None
-        if response.candidates and response.candidates[0].finish_reason:
-            finish_reason = str(response.candidates[0].finish_reason)
-
-        if not finish_reason or "MAX_TOKENS" not in finish_reason:
-            break
-
-        logger.warning(
-            "Refinamento truncado (tentativa %d/3). Pedindo continuação...",
-            attempt + 1,
-        )
+    full_text, total_input, total_output = _gemini_format_with_continuation(
+        client, modelo, system_prompt, user_msg,
+    )
 
     custo = calcular_custo_gemini(
         {"input_tokens": total_input, "output_tokens": total_output}, modelo
