@@ -145,10 +145,20 @@ if (skipFormatCheckbox) {
 // Drop Zone
 // ---------------------------------------------------------------------------
 
+// Previne o browser de abrir o arquivo ao soltar fora da drop zone
+document.addEventListener('dragover', (e) => e.preventDefault());
+document.addEventListener('drop', (e) => e.preventDefault());
+
 dropZone.addEventListener('click', () => fileInput.click());
+
+dropZone.addEventListener('dragenter', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('active');
+});
 
 dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
     dropZone.classList.add('active');
 });
 
@@ -158,6 +168,7 @@ dropZone.addEventListener('dragleave', () => {
 
 dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
+    e.stopPropagation();
     dropZone.classList.remove('active');
     const files = Array.from(e.dataTransfer.files).filter(f => f.name.toLowerCase().endsWith('.pdf'));
     if (files.length > 0) uploadFiles(files);
