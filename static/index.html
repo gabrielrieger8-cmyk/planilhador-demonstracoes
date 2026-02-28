@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Planilhador de Demonstrações</title>
-    <link rel="stylesheet" href="/static/style.css?v=2">
+    <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
     <div class="container">
@@ -52,10 +52,34 @@
                 </div>
             </div>
 
-            <!-- Cost Estimate -->
+            <!-- Cost Estimate Table -->
             <div id="cost-estimate" class="cost-estimate hidden">
-                <span class="cost-estimate-label">Custo estimado:</span>
-                <span id="cost-estimate-value" class="cost-estimate-value">—</span>
+                <table class="estimate-table">
+                    <thead>
+                        <tr>
+                            <th>Etapa</th>
+                            <th>Custo</th>
+                            <th>Tempo</th>
+                        </tr>
+                    </thead>
+                    <tbody id="estimate-body"></tbody>
+                    <tfoot>
+                        <tr class="estimate-total">
+                            <td><strong>Total</strong></td>
+                            <td id="estimate-cost-total"><strong>—</strong></td>
+                            <td id="estimate-time-total"><strong>—</strong></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+
+            <!-- Skip Formatting -->
+            <div class="skip-format-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="skip-format">
+                    Sem formatacao
+                </label>
+                <span class="skip-format-hint">Pula a etapa mais demorada &mdash; exporta texto bruto</span>
             </div>
 
             <button id="convert-btn" class="btn-primary" onclick="startProcessing()">
@@ -95,6 +119,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=2"></script>
+    <script src="/static/app.js?v=3"></script>
 </body>
 </html>

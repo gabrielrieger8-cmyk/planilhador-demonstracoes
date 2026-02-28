@@ -26,6 +26,7 @@ class ProcessRequest(BaseModel):
     classifier: Optional[str] = None
     extractor: Optional[str] = None
     formatter: Optional[str] = None
+    skip_format: bool = False
 
 router = APIRouter()
 
@@ -61,6 +62,7 @@ async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest())
         raise HTTPException(400, "ANTHROPIC_API_KEY não configurada (modelo Anthropic selecionado).")
 
     job.models = models
+    job.skip_format = body.skip_format
     job.status = "processing"
     job.completed = 0
     job.started_at = time.time()

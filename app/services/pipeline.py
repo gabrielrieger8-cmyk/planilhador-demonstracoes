@@ -162,6 +162,15 @@ def _process_single_file(
             todas_observacoes.append(f"[{tipo}] Extração falhou: {extract_result.error}")
             continue
 
+        if job.skip_format:
+            # Modo "Sem formatação": pula formatação e validação
+            resultados.append({
+                "tipo": tipo,
+                "periodo": periodo,
+                "raw_text": extract_result.text,
+            })
+            continue
+
         # --- ETAPA 3: Formatação ---
         progress.stage = "formatting"
         progress.stage_detail = f"Formatando {tipo} ({i}/{len(demonstracoes)})"
@@ -226,18 +235,30 @@ def _process_single_file(
 
     # --- ETAPA 5: Exportação ---
     progress.stage = "exporting"
-    progress.stage_detail = "Gerando Excel e CSV..."
+    progress.stage_detail = "Gerando arquivos..."
     logger.info("[%s] Exportando...", file_info.name)
 
-    xlsx_path = output_dir / f"{base_name}.xlsx"
-    export_excel_multi(resultados, empresa, xlsx_path)
-    progress.output_files.append(xlsx_path.name)
+    if job.skip_format:
+        # Exporta texto bruto da extração
+        for r in resultados:
+            txt_name = f"{base_name}_{r['tipo']}.txt"
+            txt_path = output_dir / txt_name
+            txt_path.write_text(r["raw_text"], encoding="utf-8")
+            progress.output_files.append(txt_name)
+        logger.info(
+            "[%s] Exportado texto bruto: %d arquivo(s)",
+            file_info.name, len(resultados),
+        )
+    else:
+        xlsx_path = output_dir / f"{base_name}.xlsx"
+        export_excel_multi(resultados, empresa, xlsx_path)
+        progress.output_files.append(xlsx_path.name)
 
-    for r in resultados:
-        csv_name = f"{base_name}_{r['tipo']}.csv"
-        csv_path = output_dir / csv_name
-        export_csv(r["dados"], r["tipo"], csv_path)
-        progress.output_files.append(csv_name)
+        for r in resultados:
+            csv_name = f"{base_name}_{r['tipo']}.csv"
+            csv_path = output_dir / csv_name
+            export_csv(r["dados"], r["tipo"], csv_path)
+            progress.output_files.append(csv_name)
 
     progress.cost = round(custo_total, 6)
 

@@ -42,6 +42,7 @@ class Job:
     total: int = 0
     error: str | None = None
     started_at: float = 0.0
+    skip_format: bool = False
     preview_data: dict[str, list[list[str]]] = field(default_factory=dict)
     models: dict[str, str] = field(default_factory=lambda: {
         "classifier": "gemini-2.5-flash",

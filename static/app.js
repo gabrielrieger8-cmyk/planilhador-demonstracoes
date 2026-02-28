@@ -5,6 +5,7 @@ let uploadedFiles = [];
 let eventSource = null;
 let modelDefaults = {};
 let estimatedCost = null;
+let estimatedTime = null;
 
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
@@ -13,6 +14,7 @@ const fileList = document.getElementById('file-list');
 const progressSection = document.getElementById('progress-section');
 const resultsSection = document.getElementById('results-section');
 const convertBtn = document.getElementById('convert-btn');
+const skipFormatCheckbox = document.getElementById('skip-format');
 
 // ---------------------------------------------------------------------------
 // Load available models
@@ -47,8 +49,21 @@ async function loadModels() {
 loadModels();
 
 // ---------------------------------------------------------------------------
-// Cost Estimate
+// Cost Estimate (table format)
 // ---------------------------------------------------------------------------
+
+// Empirical time per page per stage (seconds)
+const TIME_PER_PAGE = {
+    classifier: 1,
+    extractor: 20,
+    formatter: 20,
+};
+
+const STAGE_NAMES = {
+    classifier: 'Classificacao',
+    extractor: 'Extracao',
+    formatter: 'Formatacao',
+};
 
 async function updateEstimate() {
     if (!uploadedFiles.length) return;
@@ -62,6 +77,8 @@ async function updateEstimate() {
         if (select) models[stage] = select.value;
     });
 
+    const skipFormat = skipFormatCheckbox && skipFormatCheckbox.checked;
+
     try {
         const resp = await fetch('/estimate', {
             method: 'POST',
@@ -70,22 +87,59 @@ async function updateEstimate() {
         });
         if (!resp.ok) return;
         const data = await resp.json();
-        estimatedCost = data.total;
 
-        const el = document.getElementById('cost-estimate');
-        const val = document.getElementById('cost-estimate-value');
-        val.textContent = formatBRL(data.total);
-        el.classList.remove('hidden');
+        // Build table rows
+        const tbody = document.getElementById('estimate-body');
+        tbody.innerHTML = '';
+
+        let totalCost = 0;
+        let totalTime = 0;
+
+        const stages = ['classifier', 'extractor', 'formatter'];
+        stages.forEach(stage => {
+            if (skipFormat && stage === 'formatter') return;
+
+            const cost = data[stage] || 0;
+            const time = (TIME_PER_PAGE[stage] || 0) * totalPages;
+            totalCost += cost;
+            totalTime += time;
+
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td>${STAGE_NAMES[stage]}</td>
+                <td>${formatBRL(cost)}</td>
+                <td>${formatTime(time)}</td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        estimatedCost = totalCost;
+        estimatedTime = totalTime;
+
+        document.getElementById('estimate-cost-total').innerHTML = `<strong>${formatBRL(totalCost)}</strong>`;
+        document.getElementById('estimate-time-total').innerHTML = `<strong>${formatTime(totalTime)}</strong>`;
+
+        document.getElementById('cost-estimate').classList.remove('hidden');
     } catch (err) {
         console.error('Erro ao estimar custo:', err);
     }
 }
 
-// Recalcula estimativa ao mudar modelo
+// Recalcula estimativa ao mudar modelo ou checkbox
 ['classifier', 'extractor', 'formatter'].forEach(stage => {
     const select = document.getElementById(`model-${stage}`);
     if (select) select.addEventListener('change', updateEstimate);
 });
+
+if (skipFormatCheckbox) {
+    skipFormatCheckbox.addEventListener('change', () => {
+        const formatterSelect = document.getElementById('model-formatter');
+        if (formatterSelect) {
+            formatterSelect.disabled = skipFormatCheckbox.checked;
+        }
+        updateEstimate();
+    });
+}
 
 // ---------------------------------------------------------------------------
 // Drop Zone
@@ -180,6 +234,7 @@ async function removeFile(filename) {
                 fileListSection.classList.add('hidden');
                 document.getElementById('cost-estimate').classList.add('hidden');
                 estimatedCost = null;
+                estimatedTime = null;
             } else {
                 updateEstimate();
             }
@@ -222,11 +277,13 @@ async function startProcessing() {
         if (select) models[stage] = select.value;
     });
 
+    const skipFormat = skipFormatCheckbox && skipFormatCheckbox.checked;
+
     try {
         const resp = await fetch(`/process/${jobId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(models),
+            body: JSON.stringify({ ...models, skip_format: skipFormat }),
         });
         if (!resp.ok) {
             const err = await resp.json();
@@ -365,39 +422,51 @@ async function onProcessingDone() {
 
 function renderResults(data) {
     const summary = document.getElementById('results-summary');
-    let costHtml = '';
-    if (estimatedCost !== null) {
-        costHtml = `
+
+    const hasEstimate = estimatedCost !== null && estimatedTime !== null;
+
+    let html = '<div class="result-stats">';
+
+    if (hasEstimate) {
+        html += `
             <span class="result-stat">
-                <span class="label">Orcado:</span>
+                <span class="label">Tempo orcado:</span>
+                <span class="value">${formatTime(estimatedTime)}</span>
+            </span>
+            <span class="result-stat">
+                <span class="label">Tempo real:</span>
+                <span class="value">${data.total_time.toFixed(1)}s</span>
+            </span>
+            <span class="result-stat">
+                <span class="label">Custo orcado:</span>
                 <span class="value">${formatBRL(estimatedCost)}</span>
             </span>
             <span class="result-stat">
-                <span class="label">Realizado:</span>
+                <span class="label">Custo real:</span>
                 <span class="value">${formatBRL(data.total_cost)}</span>
             </span>
         `;
     } else {
-        costHtml = `
+        html += `
+            <span class="result-stat">
+                <span class="label">Tempo:</span>
+                <span class="value">${data.total_time.toFixed(1)}s</span>
+            </span>
             <span class="result-stat">
                 <span class="label">Custo:</span>
                 <span class="value">${formatBRL(data.total_cost)}</span>
             </span>
         `;
     }
-    summary.innerHTML = `
-        <div class="result-stats">
-            <span class="result-stat">
-                <span class="label">Tempo:</span>
-                <span class="value">${data.total_time.toFixed(1)}s</span>
-            </span>
-            ${costHtml}
-            <span class="result-stat">
-                <span class="label">Arquivos:</span>
-                <span class="value">${data.files.length}</span>
-            </span>
-        </div>
-    `;
+
+    html += `
+        <span class="result-stat">
+            <span class="label">Arquivos:</span>
+            <span class="value">${data.files.length}</span>
+        </span>
+    </div>`;
+
+    summary.innerHTML = html;
 
     const list = document.getElementById('results-list');
     list.innerHTML = '';
@@ -421,6 +490,7 @@ function renderResults(data) {
         else if (f.name.includes('balanco')) { badgeClass = 'bp'; badgeLabel = 'BP'; }
         else if (f.name.includes('balancete')) { badgeClass = 'balancete'; badgeLabel = 'Balancete'; }
         else if (f.type === 'xlsx') { badgeClass = 'xlsx'; badgeLabel = 'XLSX'; }
+        else if (f.type === 'txt') { badgeClass = 'txt'; badgeLabel = 'TXT'; }
 
         div.innerHTML = `
             <span class="file-icon">📊</span>
@@ -450,6 +520,7 @@ function resetApp() {
     jobId = null;
     uploadedFiles = [];
     estimatedCost = null;
+    estimatedTime = null;
     if (eventSource) { eventSource.close(); eventSource = null; }
 
     fileListSection.classList.add('hidden');
@@ -471,6 +542,13 @@ function resetApp() {
         const select = document.getElementById(`model-${stage}`);
         if (select && modelDefaults[stage]) select.value = modelDefaults[stage];
     });
+
+    // Restaura checkbox
+    if (skipFormatCheckbox) {
+        skipFormatCheckbox.checked = false;
+        const formatterSelect = document.getElementById('model-formatter');
+        if (formatterSelect) formatterSelect.disabled = false;
+    }
 
     convertBtn.disabled = false;
     convertBtn.textContent = 'Gerar Demonstrações';
