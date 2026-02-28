@@ -74,7 +74,7 @@ def _call_gemini(
     client,
     model: str,
     contents: list,
-    max_tokens: int = 200000,
+    max_tokens: int = 65000,
     temperature: float = 0.1,
     max_retries: int = 5,
 ):
@@ -413,7 +413,7 @@ def _gemini_format_with_continuation(
         response = _call_gemini(
             client, model=modelo,
             contents=contents,
-            max_tokens=200000,
+            max_tokens=65000,
         )
 
         texto_parte = response.text or ""
