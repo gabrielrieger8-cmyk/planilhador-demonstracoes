@@ -145,7 +145,7 @@ BALANCETE_COL_WIDTHS = {0: 14, 1: 42, 2: 8, 3: 10, 4: 18, 5: 18, 6: 18, 7: 18}
 
 
 def _write_balancete(ws, dados: dict, titulo: str) -> None:
-    """Escreve conteúdo de balancete em um worksheet."""
+    """Escreve conteúdo de balancete em um worksheet com fórmulas SUM."""
     contas = dados.get("contas", [])
 
     ws.append([titulo])
@@ -160,14 +160,17 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
         ws["A2"].font = Font(name="Calibri", size=11, color="666666")
     ws.append([])
 
-    header_row = ws.max_row + 1
     ws.append(BALANCETE_COLUMNS)
+    header_row = ws.max_row
     for col_idx in range(len(BALANCETE_COLUMNS)):
         cell = ws.cell(row=header_row, column=col_idx + 1)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = HEADER_ALIGN
         cell.border = THIN_BORDER
+
+    # Mapeia classificação → row number para fórmulas de totalizadoras
+    classif_to_row = {}
 
     for conta in contas:
         row = [
@@ -183,6 +186,8 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
         ws.append(row)
 
         current_row = ws.max_row
+        classif = conta.get("classificacao", "")
+        classif_to_row[classif] = current_row
         is_totalizador = conta.get("is_totalizador", False)
 
         for col_idx in range(len(BALANCETE_COLUMNS)):
@@ -201,6 +206,32 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
             else:
                 cell.alignment = LEFT_ALIGN
 
+    # Segunda passada: adiciona fórmulas SUM nas totalizadoras
+    for conta in contas:
+        if not conta.get("is_totalizador"):
+            continue
+        classif = conta.get("classificacao", "")
+        parent_row = classif_to_row.get(classif)
+        if not parent_row:
+            continue
+
+        # Encontra filhas diretas (classificação = parent + ".XX")
+        child_rows = []
+        for other in contas:
+            other_classif = other.get("classificacao", "")
+            if (other_classif != classif
+                    and other_classif.startswith(classif + ".")
+                    and other_classif[len(classif) + 1:].count(".") == 0):
+                child_row = classif_to_row.get(other_classif)
+                if child_row:
+                    child_rows.append(child_row)
+
+        if child_rows:
+            # Colunas numéricas: E (Saldo Ant), F (Déb), G (Créd), H (Saldo Atual)
+            for col_letter in ("E", "F", "G", "H"):
+                refs = "+".join(f"{col_letter}{r}" for r in sorted(child_rows))
+                ws.cell(row=parent_row, column=_col_idx(col_letter)).value = f"={refs}"
+
     for col_idx, width in BALANCETE_COL_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col_idx + 1)].width = width
 
@@ -210,6 +241,11 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
         last_row = ws.max_row
         last_col = get_column_letter(len(BALANCETE_COLUMNS))
         ws.auto_filter.ref = f"A{header_row}:{last_col}{last_row}"
+
+
+def _col_idx(letter: str) -> int:
+    """Converte letra de coluna em índice (A=1, B=2, etc.)."""
+    return ord(letter.upper()) - ord("A") + 1
 
 
 def _export_balancete_csv(dados: dict, output_path: Path) -> Path:
@@ -256,23 +292,30 @@ def _write_dre(ws, dados: dict, titulo: str) -> None:
         ws["A2"].font = Font(name="Calibri", size=11, color="666666")
     ws.append([])
 
-    receita_bruta = 0
-    for linha in linhas:
-        desc = (linha.get("descricao") or "").upper()
-        if "RECEITA" in desc and "BRUTA" in desc and not linha.get("is_subtotal"):
-            receita_bruta = abs(linha.get("valor", 0) or 0)
-            break
-    if receita_bruta == 0 and linhas:
-        receita_bruta = abs(linhas[0].get("valor", 0) or 0)
+    # Identifica linha da receita bruta para fórmula AV%
+    receita_bruta_row = None
 
-    header_row = ws.max_row + 1
     ws.append(DRE_COLUMNS)
+    header_row = ws.max_row  # Row onde os headers foram escritos
     for col_idx in range(len(DRE_COLUMNS)):
         cell = ws.cell(row=header_row, column=col_idx + 1)
         cell.font = HEADER_FONT
         cell.fill = HEADER_FILL
         cell.alignment = HEADER_ALIGN
         cell.border = THIN_BORDER
+
+    # Primeira passada: encontra a receita bruta
+    for idx, linha in enumerate(linhas):
+        desc = (linha.get("descricao") or "").upper()
+        if "RECEITA" in desc and ("BRUTA" in desc or "OPERACIONAL BRUTA" in desc):
+            receita_bruta_row = header_row + 1 + idx
+            break
+    if receita_bruta_row is None and linhas:
+        receita_bruta_row = header_row + 1  # primeira linha de dados
+
+    # Rastreia linhas para fórmulas de subtotal
+    last_subtotal_data_row = None  # última linha de subtotal escrita
+    non_subtotal_rows = []  # linhas de detalhe desde último subtotal
 
     for linha in linhas:
         valor = linha.get("valor", 0) or 0
@@ -281,11 +324,31 @@ def _write_dre(ws, dados: dict, titulo: str) -> None:
 
         indent = "  " * (nivel - 1)
         descricao = f"{indent}{linha.get('descricao', '')}"
-        pct = (valor / receita_bruta * 100) if receita_bruta != 0 else 0
 
-        ws.append([descricao, valor, pct / 100])
-
+        ws.append([descricao, valor, 0])  # placeholder para AV%
         current_row = ws.max_row
+
+        # Fórmula AV% (Análise Vertical): =B{row}/B${receita_bruta_row}
+        pct_cell = ws.cell(row=current_row, column=3)
+        if receita_bruta_row:
+            pct_cell.value = f"=IF(B${receita_bruta_row}=0,0,B{current_row}/B${receita_bruta_row})"
+
+        # Fórmula de subtotal: =SUM das linhas de detalhe acima
+        if is_subtotal and non_subtotal_rows:
+            sum_refs = ",".join(f"B{r}" for r in non_subtotal_rows)
+            if last_subtotal_data_row:
+                # Soma detalhe + subtotal anterior
+                sum_refs = f"B{last_subtotal_data_row}," + ",".join(f"B{r}" for r in non_subtotal_rows)
+            ws.cell(row=current_row, column=2).value = f"=SUM({sum_refs})"
+            last_subtotal_data_row = current_row
+            non_subtotal_rows = []
+        elif is_subtotal:
+            last_subtotal_data_row = current_row
+            non_subtotal_rows = []
+        else:
+            non_subtotal_rows.append(current_row)
+
+        # Estilo
         for col_idx in range(len(DRE_COLUMNS)):
             cell = ws.cell(row=current_row, column=col_idx + 1)
             cell.border = THIN_BORDER
@@ -349,20 +412,27 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
         ws["A2"].font = Font(name="Calibri", size=11, color="666666")
     ws.append([])
 
-    def _write_section(title: str, section: dict):
-        total = section.get("total", 0) or 0
-        ws.append([title, total])
-        row_num = ws.max_row
-        ws.cell(row=row_num, column=1).font = Font(
+    # Rastreia rows para fórmulas SUM
+    section_total_rows = {}  # "ativo", "passivo", "pl" → row number
+    sub_total_rows = {}  # ("ativo","circulante") → row number
+
+    def _write_section(title: str, section: dict, section_key: str):
+        # Header da seção com placeholder para fórmula SUM
+        ws.append([title, 0])
+        section_row = ws.max_row
+        section_total_rows[section_key] = section_row
+        ws.cell(row=section_row, column=1).font = Font(
             name="Calibri", bold=True, size=13, color="2F5496",
         )
-        ws.cell(row=row_num, column=2).font = Font(
+        ws.cell(row=section_row, column=2).font = Font(
             name="Calibri", bold=True, size=13, color="2F5496",
         )
-        ws.cell(row=row_num, column=2).number_format = BR_NUMBER_FORMAT
-        ws.cell(row=row_num, column=2).alignment = RIGHT_ALIGN
-        ws.cell(row=row_num, column=1).border = THIN_BORDER
-        ws.cell(row=row_num, column=2).border = THIN_BORDER
+        ws.cell(row=section_row, column=2).number_format = BR_NUMBER_FORMAT
+        ws.cell(row=section_row, column=2).alignment = RIGHT_ALIGN
+        ws.cell(row=section_row, column=1).border = THIN_BORDER
+        ws.cell(row=section_row, column=2).border = THIN_BORDER
+
+        sub_rows_for_section = []
 
         for sub_key in ("circulante", "nao_circulante"):
             sub = section.get(sub_key, {})
@@ -370,24 +440,27 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                 continue
 
             sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
-            sub_total = sub.get("total", 0) or 0
-            ws.append([f"  {sub_title}", sub_total])
-            sub_row = ws.max_row
-            ws.cell(row=sub_row, column=1).font = AGRUPADORA_FONT
-            ws.cell(row=sub_row, column=1).fill = AGRUPADORA_FILL
-            ws.cell(row=sub_row, column=1).border = THIN_BORDER
-            ws.cell(row=sub_row, column=2).font = AGRUPADORA_FONT
-            ws.cell(row=sub_row, column=2).fill = AGRUPADORA_FILL
-            ws.cell(row=sub_row, column=2).number_format = BR_NUMBER_FORMAT
-            ws.cell(row=sub_row, column=2).alignment = RIGHT_ALIGN
-            ws.cell(row=sub_row, column=2).border = THIN_BORDER
+            ws.append([f"  {sub_title}", 0])  # placeholder
+            sub_header_row = ws.max_row
+            sub_total_rows[(section_key, sub_key)] = sub_header_row
+            sub_rows_for_section.append(sub_header_row)
+            ws.cell(row=sub_header_row, column=1).font = AGRUPADORA_FONT
+            ws.cell(row=sub_header_row, column=1).fill = AGRUPADORA_FILL
+            ws.cell(row=sub_header_row, column=1).border = THIN_BORDER
+            ws.cell(row=sub_header_row, column=2).font = AGRUPADORA_FONT
+            ws.cell(row=sub_header_row, column=2).fill = AGRUPADORA_FILL
+            ws.cell(row=sub_header_row, column=2).number_format = BR_NUMBER_FORMAT
+            ws.cell(row=sub_header_row, column=2).alignment = RIGHT_ALIGN
+            ws.cell(row=sub_header_row, column=2).border = THIN_BORDER
 
+            conta_rows = []
             for conta in sub.get("contas", []):
                 nivel = conta.get("nivel", 3)
                 is_sub = conta.get("is_subtotal", False)
                 indent = "    " * max(1, nivel - 2)
                 ws.append([f"{indent}{conta.get('descricao', '')}", conta.get("valor", 0)])
                 current_row = ws.max_row
+                conta_rows.append(current_row)
                 for c in range(1, 3):
                     cell = ws.cell(row=current_row, column=c)
                     cell.border = THIN_BORDER
@@ -398,15 +471,26 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                         cell.number_format = BR_NUMBER_FORMAT
                         cell.alignment = RIGHT_ALIGN
 
+            # Fórmula SUM no header da subsecção
+            if conta_rows:
+                first_r, last_r = conta_rows[0], conta_rows[-1]
+                ws.cell(row=sub_header_row, column=2).value = f"=SUM(B{first_r}:B{last_r})"
+
+        # Fórmula SUM no header da seção (soma das subsecções)
+        if sub_rows_for_section:
+            refs = "+".join(f"B{r}" for r in sub_rows_for_section)
+            ws.cell(row=section_row, column=2).value = f"={refs}"
+
         ws.append([])
 
-    _write_section("ATIVO", dados.get("ativo", {}))
-    _write_section("PASSIVO", dados.get("passivo", {}))
+    _write_section("ATIVO", dados.get("ativo", {}), "ativo")
+    _write_section("PASSIVO", dados.get("passivo", {}), "passivo")
 
+    # Patrimônio Líquido
     pl = dados.get("patrimonio_liquido", {})
-    total_pl = pl.get("total", 0) or 0
-    ws.append(["PATRIMÔNIO LÍQUIDO", total_pl])
+    ws.append(["PATRIMÔNIO LÍQUIDO", 0])  # placeholder
     pl_row = ws.max_row
+    section_total_rows["pl"] = pl_row
     ws.cell(row=pl_row, column=1).font = Font(
         name="Calibri", bold=True, size=13, color="2F5496",
     )
@@ -418,10 +502,12 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
     ws.cell(row=pl_row, column=1).border = THIN_BORDER
     ws.cell(row=pl_row, column=2).border = THIN_BORDER
 
+    pl_conta_rows = []
     for conta in pl.get("contas", []):
         is_sub = conta.get("is_subtotal", False)
         ws.append([f"  {conta.get('descricao', '')}", conta.get("valor", 0)])
         current_row = ws.max_row
+        pl_conta_rows.append(current_row)
         for c in range(1, 3):
             cell = ws.cell(row=current_row, column=c)
             cell.border = THIN_BORDER
@@ -432,24 +518,52 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                 cell.number_format = BR_NUMBER_FORMAT
                 cell.alignment = RIGHT_ALIGN
 
+    # Fórmula SUM para PL
+    if pl_conta_rows:
+        first_r, last_r = pl_conta_rows[0], pl_conta_rows[-1]
+        ws.cell(row=pl_row, column=2).value = f"=SUM(B{first_r}:B{last_r})"
+
     ws.append([])
 
-    total_ativo = dados.get("ativo", {}).get("total", 0) or 0
-    total_passivo = dados.get("passivo", {}).get("total", 0) or 0
-    passivo_pl = total_passivo + total_pl
-    valido = abs(total_ativo - passivo_pl) < max(abs(total_ativo), 0.01) * 0.01
+    # Validação com fórmulas
+    ativo_row = section_total_rows.get("ativo")
+    passivo_row = section_total_rows.get("passivo")
 
     ws.append(["VALIDAÇÃO: Ativo = Passivo + PL"])
     ws.cell(row=ws.max_row, column=1).font = Font(name="Calibri", bold=True, size=11)
-    ws.append([
-        f"Ativo Total: {total_ativo:,.2f}  |  Passivo + PL: {passivo_pl:,.2f}  |  "
-        f"{'OK' if valido else 'DIVERGENTE'}"
-    ])
-    status_cell = ws.cell(row=ws.max_row, column=1)
-    status_cell.font = Font(
-        name="Calibri", bold=True, size=11,
-        color="006100" if valido else "9C0006",
-    )
+
+    if ativo_row and passivo_row:
+        ws.append([
+            "Diferença (Ativo - Passivo - PL):",
+            None,
+        ])
+        diff_row = ws.max_row
+        ws.cell(row=diff_row, column=2).value = f"=B{ativo_row}-B{passivo_row}-B{pl_row}"
+        ws.cell(row=diff_row, column=2).number_format = BR_NUMBER_FORMAT
+        ws.cell(row=diff_row, column=2).alignment = RIGHT_ALIGN
+
+        ws.append(["Status:"])
+        status_row = ws.max_row
+        ws.cell(row=status_row, column=2).value = (
+            f'=IF(ABS(B{diff_row})<0.01,"OK","DIVERGENTE")'
+        )
+        status_cell = ws.cell(row=status_row, column=2)
+        status_cell.font = Font(name="Calibri", bold=True, size=11)
+    else:
+        total_ativo = dados.get("ativo", {}).get("total", 0) or 0
+        total_passivo = dados.get("passivo", {}).get("total", 0) or 0
+        total_pl = pl.get("total", 0) or 0
+        passivo_pl = total_passivo + total_pl
+        valido = abs(total_ativo - passivo_pl) < max(abs(total_ativo), 0.01) * 0.01
+        ws.append([
+            f"Ativo Total: {total_ativo:,.2f}  |  Passivo + PL: {passivo_pl:,.2f}  |  "
+            f"{'OK' if valido else 'DIVERGENTE'}"
+        ])
+        status_cell = ws.cell(row=ws.max_row, column=1)
+        status_cell.font = Font(
+            name="Calibri", bold=True, size=11,
+            color="006100" if valido else "9C0006",
+        )
 
     for col_idx, width in BALANCO_COL_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col_idx + 1)].width = width

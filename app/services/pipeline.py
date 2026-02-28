@@ -2,6 +2,7 @@
 
 Roda em thread background. Suporta PDFs com múltiplas demonstrações.
 Roteia entre Gemini e Anthropic conforme o modelo selecionado em cada etapa.
+Formatação feita em Python (sem chamada de IA) para máxima velocidade.
 """
 
 from __future__ import annotations
@@ -15,12 +16,11 @@ from app.jobs import Job, JobProgress
 from app.services.classifier import classificar
 from app.services.gemini_client import (
     extrair_balancete, extrair_demonstracao,
-    formatar_demonstracao_gemini, refinar_balancete_gemini,
 )
 from app.services.anthropic_client import (
-    formatar_demonstracao, refinar_balancete,
     extrair_balancete_anthropic, extrair_demonstracao_anthropic,
 )
+from app.services.formatter import formatar_dre, formatar_balanco, formatar_balancete
 from app.services.validator import validate
 from app.services.exporter import export_excel_multi, export_csv, export_raw_excel, export_raw_csv
 
@@ -80,10 +80,8 @@ def _process_single_file(
     # Modelos configurados pelo usuário
     classifier_model = job.models.get("classifier")
     extractor_model = job.models.get("extractor")
-    formatter_model = job.models.get("formatter")
 
     is_anthropic_extractor = extractor_model and extractor_model.startswith("claude-")
-    is_anthropic_formatter = formatter_model and formatter_model.startswith("claude-")
 
     # --- ETAPA 1: Classificação ---
     progress.stage = "classifying"
@@ -171,32 +169,19 @@ def _process_single_file(
             })
             continue
 
-        # --- ETAPA 3: Formatação ---
+        # --- ETAPA 3: Formatação (Python, sem IA) ---
         progress.stage = "formatting"
         progress.stage_detail = f"Formatando {tipo} ({i}/{len(demonstracoes)})"
-        logger.info("[%s] Formatando %s com %s...", file_info.name, tipo, formatter_model)
+        logger.info("[%s] Formatando %s (Python)...", file_info.name, tipo)
 
         if tipo == "balancete":
-            if is_anthropic_formatter:
-                format_result = refinar_balancete(
-                    extract_result.text, api_key=ANTHROPIC_API_KEY, model=formatter_model
-                )
-            else:
-                format_result = refinar_balancete_gemini(
-                    extract_result.text, model=formatter_model, api_key=GEMINI_API_KEY
-                )
+            dados = formatar_balancete(extract_result.text, empresa=empresa, periodo=periodo)
+        elif tipo == "dre":
+            dados = formatar_dre(extract_result.text, empresa=empresa, periodo=periodo)
+        elif tipo == "balanco_patrimonial":
+            dados = formatar_balanco(extract_result.text, empresa=empresa, data_ref=periodo)
         else:
-            if is_anthropic_formatter:
-                format_result = formatar_demonstracao(
-                    extract_result.text, tipo, api_key=ANTHROPIC_API_KEY, model=formatter_model
-                )
-            else:
-                format_result = formatar_demonstracao_gemini(
-                    extract_result.text, tipo, model=formatter_model, api_key=GEMINI_API_KEY
-                )
-
-        dados = format_result.get("dados", {})
-        custo_total += format_result.get("custo_usd", 0)
+            dados = {"empresa": empresa, "periodo": periodo}
 
         # Enriquece dados
         dados["empresa"] = empresa

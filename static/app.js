@@ -27,7 +27,7 @@ async function loadModels() {
         const data = await resp.json();
         modelDefaults = data.defaults || {};
 
-        const stages = ['classifier', 'extractor', 'formatter'];
+        const stages = ['classifier', 'extractor'];
         stages.forEach(stage => {
             const select = document.getElementById(`model-${stage}`);
             if (!select) return;
@@ -56,13 +56,11 @@ loadModels();
 const TIME_PER_PAGE = {
     classifier: 1,
     extractor: 20,
-    formatter: 20,
 };
 
 const STAGE_NAMES = {
-    classifier: 'Classificacao',
-    extractor: 'Extracao',
-    formatter: 'Formatacao',
+    classifier: 'Classificação',
+    extractor: 'Extração',
 };
 
 async function updateEstimate() {
@@ -72,12 +70,10 @@ async function updateEstimate() {
     if (totalPages === 0) return;
 
     const models = {};
-    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+    ['classifier', 'extractor'].forEach(stage => {
         const select = document.getElementById(`model-${stage}`);
         if (select) models[stage] = select.value;
     });
-
-    const skipFormat = skipFormatCheckbox && skipFormatCheckbox.checked;
 
     try {
         const resp = await fetch('/estimate', {
@@ -95,10 +91,8 @@ async function updateEstimate() {
         let totalCost = 0;
         let totalTime = 0;
 
-        const stages = ['classifier', 'extractor', 'formatter'];
+        const stages = ['classifier', 'extractor'];
         stages.forEach(stage => {
-            if (skipFormat && stage === 'formatter') return;
-
             const cost = data[stage] || 0;
             const time = (TIME_PER_PAGE[stage] || 0) * totalPages;
             totalCost += cost;
@@ -125,21 +119,11 @@ async function updateEstimate() {
     }
 }
 
-// Recalcula estimativa ao mudar modelo ou checkbox
-['classifier', 'extractor', 'formatter'].forEach(stage => {
+// Recalcula estimativa ao mudar modelo
+['classifier', 'extractor'].forEach(stage => {
     const select = document.getElementById(`model-${stage}`);
     if (select) select.addEventListener('change', updateEstimate);
 });
-
-if (skipFormatCheckbox) {
-    skipFormatCheckbox.addEventListener('change', () => {
-        const formatterSelect = document.getElementById('model-formatter');
-        if (formatterSelect) {
-            formatterSelect.disabled = skipFormatCheckbox.checked;
-        }
-        updateEstimate();
-    });
-}
 
 // ---------------------------------------------------------------------------
 // Drop Zone
@@ -283,7 +267,7 @@ async function startProcessing() {
 
     // Coleta modelos selecionados
     const models = {};
-    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+    ['classifier', 'extractor'].forEach(stage => {
         const select = document.getElementById(`model-${stage}`);
         if (select) models[stage] = select.value;
     });
@@ -548,7 +532,7 @@ function resetApp() {
     document.getElementById('cost-estimate').classList.add('hidden');
 
     // Restaura selects de modelo ao default
-    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+    ['classifier', 'extractor'].forEach(stage => {
         const select = document.getElementById(`model-${stage}`);
         if (select && modelDefaults[stage]) select.value = modelDefaults[stage];
     });
@@ -556,8 +540,6 @@ function resetApp() {
     // Restaura checkbox
     if (skipFormatCheckbox) {
         skipFormatCheckbox.checked = false;
-        const formatterSelect = document.getElementById('model-formatter');
-        if (formatterSelect) formatterSelect.disabled = false;
     }
 
     convertBtn.disabled = false;

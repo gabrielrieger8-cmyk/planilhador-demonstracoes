@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Planilhador de Demonstrações</title>
-    <link rel="stylesheet" href="/static/style.css?v=4">
+    <link rel="stylesheet" href="/static/style.css?v=5">
 </head>
 <body>
     <div class="container">
@@ -36,7 +36,7 @@
             <!-- Model Selection -->
             <div class="model-config">
                 <h3>Modelos</h3>
-                <div class="model-grid">
+                <div class="model-grid model-grid-2">
                     <div class="model-field">
                         <label for="model-classifier">Classificação</label>
                         <select id="model-classifier"></select>
@@ -44,10 +44,6 @@
                     <div class="model-field">
                         <label for="model-extractor">Extração</label>
                         <select id="model-extractor"></select>
-                    </div>
-                    <div class="model-field">
-                        <label for="model-formatter">Formatação</label>
-                        <select id="model-formatter"></select>
                     </div>
                 </div>
             </div>
@@ -77,9 +73,9 @@
             <div class="skip-format-row">
                 <label class="checkbox-label">
                     <input type="checkbox" id="skip-format">
-                    Sem formatacao
+                    Dados brutos
                 </label>
-                <span class="skip-format-hint">Pula a etapa mais demorada &mdash; exporta texto bruto</span>
+                <span class="skip-format-hint">Exporta extração bruta sem estruturar &mdash; útil para debug</span>
             </div>
 
             <button id="convert-btn" class="btn-primary" onclick="startProcessing()">
@@ -119,6 +115,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=4"></script>
+    <script src="/static/app.js?v=5"></script>
 </body>
 </html>

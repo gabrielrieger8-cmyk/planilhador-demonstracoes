@@ -200,6 +200,10 @@ h2 {
     gap: 0.75rem;
 }
 
+.model-grid-2 {
+    grid-template-columns: 1fr 1fr;
+}
+
 .model-field label {
     display: block;
     font-size: 0.8rem;
