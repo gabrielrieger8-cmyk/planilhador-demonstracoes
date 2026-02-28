@@ -232,6 +232,30 @@ h2 {
     .model-grid { grid-template-columns: 1fr; }
 }
 
+/* Cost Estimate */
+.cost-estimate {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.6rem 1rem;
+    margin-bottom: 0.75rem;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-radius: 8px;
+    font-size: 0.9rem;
+}
+
+.cost-estimate-label {
+    color: #166534;
+    font-weight: 500;
+}
+
+.cost-estimate-value {
+    color: #166534;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
 /* Progress */
 #progress-section {
     margin-top: 1.5rem;

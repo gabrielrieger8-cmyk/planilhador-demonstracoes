@@ -4,6 +4,7 @@ let jobId = null;
 let uploadedFiles = [];
 let eventSource = null;
 let modelDefaults = {};
+let estimatedCost = null;
 
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
@@ -44,6 +45,47 @@ async function loadModels() {
 }
 
 loadModels();
+
+// ---------------------------------------------------------------------------
+// Cost Estimate
+// ---------------------------------------------------------------------------
+
+async function updateEstimate() {
+    if (!uploadedFiles.length) return;
+
+    const totalPages = uploadedFiles.reduce((sum, f) => sum + (f.pages || 0), 0);
+    if (totalPages === 0) return;
+
+    const models = {};
+    ['classifier', 'extractor', 'formatter'].forEach(stage => {
+        const select = document.getElementById(`model-${stage}`);
+        if (select) models[stage] = select.value;
+    });
+
+    try {
+        const resp = await fetch('/estimate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ total_pages: totalPages, ...models }),
+        });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        estimatedCost = data.total;
+
+        const el = document.getElementById('cost-estimate');
+        const val = document.getElementById('cost-estimate-value');
+        val.textContent = '$' + data.total.toFixed(4);
+        el.classList.remove('hidden');
+    } catch (err) {
+        console.error('Erro ao estimar custo:', err);
+    }
+}
+
+// Recalcula estimativa ao mudar modelo
+['classifier', 'extractor', 'formatter'].forEach(stage => {
+    const select = document.getElementById(`model-${stage}`);
+    if (select) select.addEventListener('change', updateEstimate);
+});
 
 // ---------------------------------------------------------------------------
 // Drop Zone
@@ -100,6 +142,7 @@ async function uploadFiles(files) {
         fileListSection.classList.remove('hidden');
         progressSection.classList.add('hidden');
         resultsSection.classList.add('hidden');
+        updateEstimate();
     } catch (err) {
         alert('Erro de conexão: ' + err.message);
     } finally {
@@ -135,6 +178,10 @@ async function removeFile(filename) {
             renderFileList({ files: uploadedFiles, total_pages: data.total_pages });
             if (uploadedFiles.length === 0) {
                 fileListSection.classList.add('hidden');
+                document.getElementById('cost-estimate').classList.add('hidden');
+                estimatedCost = null;
+            } else {
+                updateEstimate();
             }
         }
     } catch (err) {
@@ -318,16 +365,33 @@ async function onProcessingDone() {
 
 function renderResults(data) {
     const summary = document.getElementById('results-summary');
+    let costHtml = '';
+    if (estimatedCost !== null) {
+        costHtml = `
+            <span class="result-stat">
+                <span class="label">Orcado:</span>
+                <span class="value">$${estimatedCost.toFixed(4)}</span>
+            </span>
+            <span class="result-stat">
+                <span class="label">Realizado:</span>
+                <span class="value">$${data.total_cost.toFixed(4)}</span>
+            </span>
+        `;
+    } else {
+        costHtml = `
+            <span class="result-stat">
+                <span class="label">Custo:</span>
+                <span class="value">$${data.total_cost.toFixed(4)}</span>
+            </span>
+        `;
+    }
     summary.innerHTML = `
         <div class="result-stats">
             <span class="result-stat">
                 <span class="label">Tempo:</span>
                 <span class="value">${data.total_time.toFixed(1)}s</span>
             </span>
-            <span class="result-stat">
-                <span class="label">Custo:</span>
-                <span class="value">$${data.total_cost.toFixed(4)}</span>
-            </span>
+            ${costHtml}
             <span class="result-stat">
                 <span class="label">Arquivos:</span>
                 <span class="value">${data.files.length}</span>
@@ -385,6 +449,7 @@ function downloadAll() {
 function resetApp() {
     jobId = null;
     uploadedFiles = [];
+    estimatedCost = null;
     if (eventSource) { eventSource.close(); eventSource = null; }
 
     fileListSection.classList.add('hidden');
@@ -399,6 +464,7 @@ function resetApp() {
     document.getElementById('elapsed-timer').textContent = '0:00';
     document.getElementById('progress-details').innerHTML = '';
     document.getElementById('results-list').innerHTML = '';
+    document.getElementById('cost-estimate').classList.add('hidden');
 
     // Restaura selects de modelo ao default
     ['classifier', 'extractor', 'formatter'].forEach(stage => {

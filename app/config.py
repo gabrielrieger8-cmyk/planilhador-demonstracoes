@@ -104,6 +104,46 @@ def calcular_custo_anthropic(usage, modelo: str) -> float:
 
 
 # ---------------------------------------------------------------------------
+# Estimativa de custo (tokens empíricos por página)
+# ---------------------------------------------------------------------------
+
+TOKENS_PER_PAGE = {
+    "classifier": {"input_per_page": 1500, "output_fixed": 50},
+    "extractor":  {"input_per_page": 1500, "output_per_page": 3000},
+    "formatter":  {"input_per_page": 4000, "output_per_page": 4000},
+}
+
+
+def estimar_custo(total_pages: int, models: dict[str, str]) -> dict:
+    """Estima custo por etapa baseado em tokens/página e pricing do modelo.
+
+    Returns:
+        Dict com custo estimado por etapa e total.
+    """
+    result = {}
+    total = 0.0
+
+    for stage, tpp in TOKENS_PER_PAGE.items():
+        model_id = models.get(stage, "gemini-2.5-flash")
+        pricing = ALL_MODELS.get(model_id, {})
+        input_price = pricing.get("input_price", 0.15)
+        output_price = pricing.get("output_price", 3.50)
+
+        input_tokens = tpp.get("input_per_page", 0) * total_pages
+        output_tokens = (
+            tpp.get("output_per_page", 0) * total_pages
+            + tpp.get("output_fixed", 0)
+        )
+
+        custo = (input_tokens * input_price + output_tokens * output_price) / 1_000_000
+        result[stage] = round(custo, 6)
+        total += custo
+
+    result["total"] = round(total, 6)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 

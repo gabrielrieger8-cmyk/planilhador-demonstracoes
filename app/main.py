@@ -20,6 +20,7 @@ from app.config import (
     DATABASE_URL, logger,
     GEMINI_MODELS, ANTHROPIC_MODELS, ALL_MODELS,
     CLASSIFIER_MODEL, EXTRACTOR_MODEL, FORMATTER_MODEL,
+    estimar_custo,
 )
 from app.models.database import init_db
 
@@ -116,6 +117,18 @@ async def get_models():
             "formatter": FORMATTER_MODEL,
         },
     }
+
+
+@app.post("/estimate")
+async def estimate(body: dict):
+    """Estima custo de processamento baseado em páginas e modelos."""
+    total_pages = body.get("total_pages", 0)
+    models = {
+        "classifier": body.get("classifier", CLASSIFIER_MODEL),
+        "extractor": body.get("extractor", EXTRACTOR_MODEL),
+        "formatter": body.get("formatter", FORMATTER_MODEL),
+    }
+    return estimar_custo(total_pages, models)
 
 
 # Registra rotas
