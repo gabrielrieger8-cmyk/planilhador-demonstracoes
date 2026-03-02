@@ -21,6 +21,8 @@ if _env_path.exists():
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+ADOBE_CLIENT_ID = os.getenv("ADOBE_CLIENT_ID", "")
+ADOBE_CLIENT_SECRET = os.getenv("ADOBE_CLIENT_SECRET", "")
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_project_root / 'data.db'}")
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(_project_root / "uploads"))
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))

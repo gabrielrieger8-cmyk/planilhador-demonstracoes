@@ -11,7 +11,7 @@ import logging
 import time
 from pathlib import Path
 
-from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY
+from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY, ADOBE_CLIENT_ID, ADOBE_CLIENT_SECRET
 from app.jobs import Job, JobProgress
 from app.services.classifier import classificar
 from app.services.gemini_client import (
@@ -23,6 +23,7 @@ from app.services.anthropic_client import (
 from app.services.formatter import formatar_dre, formatar_balanco, formatar_balancete
 from app.services.validator import validate
 from app.services.exporter import export_excel_multi, export_csv, export_raw_excel, export_raw_csv
+from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 
 logger = logging.getLogger("planilhador")
 
@@ -102,6 +103,19 @@ def _process_single_file(
     logger.info(
         "[%s] %d demonstração(ões): %s", file_info.name, len(demonstracoes), tipos
     )
+
+    # --- ETAPA 1.5: Adobe OCR para PDFs escaneados ---
+    if not has_native_text(pdf_path):
+        if ADOBE_CLIENT_ID and ADOBE_CLIENT_SECRET:
+            progress.stage_detail = "PDF escaneado detectado. Aplicando Adobe OCR (PT-BR)..."
+            logger.info("[%s] PDF sem texto nativo. Aplicando Adobe OCR...", file_info.name)
+            try:
+                ocr_with_adobe(pdf_path, ADOBE_CLIENT_ID, ADOBE_CLIENT_SECRET)
+                logger.info("[%s] Adobe OCR concluído.", file_info.name)
+            except Exception as exc:
+                logger.warning("[%s] Adobe OCR falhou: %s", file_info.name, exc)
+        else:
+            logger.warning("[%s] PDF sem texto nativo e sem credenciais Adobe OCR.", file_info.name)
 
     # --- ETAPA 2+3: Extração + Formatação por demonstração ---
     resultados = []

@@ -117,6 +117,28 @@ _DRE_SUBTOTAL_KEYWORDS = [
 ]
 
 
+def _detect_classif_column(rows: list[list[str]]) -> bool:
+    """Detecta se a primeira coluna contém classificações numéricas (1.1, 2.3.1, etc.)."""
+    if not rows:
+        return False
+    # Checa se header menciona "classificação"
+    if rows[0]:
+        first_upper = " ".join(rows[0]).upper()
+        if "CLASSIFICAÇÃO" in first_upper or "CLASSIFICACAO" in first_upper:
+            return True
+    # Checa se pelo menos 30% das linhas têm classificação numérica na coluna 0
+    classif_count = 0
+    total = 0
+    classif_re = re.compile(r"^\d+(\.\d+)*$")
+    for row in rows:
+        if len(row) >= 3:
+            total += 1
+            col0 = row[0].strip().replace("**", "")
+            if classif_re.match(col0):
+                classif_count += 1
+    return total > 0 and classif_count / total >= 0.3
+
+
 def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
     """Converte tabela Markdown de DRE em JSON estruturado."""
     rows = _parse_pipe_table(texto)
@@ -126,25 +148,38 @@ def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
     # Pula header (primeira linha se contiver texto como "Descrição")
     start = 0
     if rows and any(
-        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION")
+        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION",
+                       "CLASSIFICAÇÃO", "CLASSIFICACAO")
         for h in rows[0]
     ):
         start = 1
+
+    # Detecta se tem coluna de classificação (3 colunas: Classif | Desc | Valor)
+    has_classif = _detect_classif_column(rows[start:])
 
     linhas = []
     resultado_liquido = None
 
     for row in rows[start:]:
-        if len(row) < 2:
-            continue
+        if has_classif:
+            if len(row) < 3:
+                continue
+            classificacao = row[0].strip().replace("**", "")
+            descricao_raw = row[1].strip()
+            valor_raw = row[2]
+        else:
+            if len(row) < 2:
+                continue
+            classificacao = ""
+            descricao_raw = row[0].strip()
+            valor_raw = row[1]
 
-        descricao_raw = row[0].strip()
         # Remove markdown bold
         descricao = descricao_raw.replace("**", "").strip()
         if not descricao:
             continue
 
-        valor, _ = _parse_br_number(row[1])
+        valor, _ = _parse_br_number(valor_raw)
 
         # Determina nível
         is_bold = "**" in descricao_raw
@@ -174,12 +209,15 @@ def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
                 resultado_liquido = valor
                 break
 
-        linhas.append({
+        linha_dict = {
             "descricao": descricao,
             "valor": valor,
             "nivel": nivel,
             "is_subtotal": is_subtotal,
-        })
+        }
+        if classificacao:
+            linha_dict["classificacao"] = classificacao
+        linhas.append(linha_dict)
 
     return {
         "empresa": empresa,
@@ -221,10 +259,14 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
     # Pula header
     start = 0
     if rows and any(
-        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION", "VALOR")
+        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION", "VALOR",
+                       "CLASSIFICAÇÃO", "CLASSIFICACAO")
         for h in rows[0]
     ):
         start = 1
+
+    # Detecta se tem coluna de classificação
+    has_classif = _detect_classif_column(rows[start:])
 
     # Estado de parsing
     secao = None  # "ativo", "passivo", "pl"
@@ -250,15 +292,25 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
         if len(row) < 1:
             continue
 
-        descricao_raw = row[0].strip()
+        if has_classif:
+            if len(row) < 2:
+                continue
+            classificacao_raw = row[0].strip().replace("**", "")
+            descricao_raw = row[1].strip()
+            valor_col = row[2] if len(row) >= 3 else ""
+        else:
+            classificacao_raw = ""
+            descricao_raw = row[0].strip()
+            valor_col = row[1] if len(row) >= 2 else ""
+
         descricao = descricao_raw.replace("**", "").strip()
         if not descricao:
             continue
 
         desc_upper = _normalize_accents(descricao.upper())
         valor = 0.0
-        if len(row) >= 2:
-            valor, _ = _parse_br_number(row[1])
+        if valor_col:
+            valor, _ = _parse_br_number(valor_col)
             valor = abs(valor)  # Balanço sempre positivo
 
         # Detecta subsecções ANTES de seções (para evitar que "Ativo Não Circulante"
@@ -325,6 +377,8 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
 
         # Conta normal
         conta = {"descricao": descricao, "valor": valor, "nivel": 3}
+        if classificacao_raw:
+            conta["classificacao"] = classificacao_raw
         is_bold = "**" in descricao_raw
 
         if secao == "pl":
