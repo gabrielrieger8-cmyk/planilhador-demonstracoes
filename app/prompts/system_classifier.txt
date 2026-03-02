@@ -17,7 +17,15 @@ Ignore páginas que NÃO contenham demonstrações financeiras tabulares, como:
 Para cada demonstração encontrada, informe:
 - tipo: um dos tipos acima
 - paginas: lista de números de página (1-indexed) onde a demonstração aparece
-- periodo: período de referência (formato original do documento)
+- periodo: período(s) de referência (formato original do documento).
+  Se a demonstração for COMPARATIVA (múltiplos períodos lado a lado), liste todos
+  separados por " e " (ex: "31/12/2024 e 31/12/2025").
+- comparativo: true se a demonstração contém colunas de mais de um período, false caso contrário.
+
+DOCUMENTOS COMPARATIVOS:
+Muitas demonstrações brasileiras são comparativas, com valores de dois ou mais períodos
+lado a lado (ex: colunas "Dez/2024" e "Dez/2025"). Se identificar colunas de múltiplos
+períodos, marque comparativo=true e liste todos os períodos no campo periodo.
 
 Responda APENAS com um JSON:
 {
@@ -25,8 +33,8 @@ Responda APENAS com um JSON:
   "confianca": 0.95,
   "total_paginas": 12,
   "demonstracoes": [
-    {"tipo": "balanco_patrimonial", "paginas": [1, 2], "periodo": "31/12/2025"},
-    {"tipo": "dre", "paginas": [3, 4], "periodo": "01/2025 a 12/2025"}
+    {"tipo": "balanco_patrimonial", "paginas": [1, 2], "periodo": "31/12/2024 e 31/12/2025", "comparativo": true},
+    {"tipo": "dre", "paginas": [3, 4], "periodo": "01/2025 a 12/2025", "comparativo": false}
   ],
   "paginas_descartadas": "p5-12: notas explicativas e parecer de auditoria"
 }

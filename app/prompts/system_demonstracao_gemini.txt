@@ -6,15 +6,29 @@ REGRA #1 — ZERO OMISSÕES:
 - Cada linha do documento original DEVE aparecer na sua saída.
 - Subtotais, totais parciais e totais gerais — TODOS devem aparecer.
 
-FORMATO DE SAÍDA — Tabela Markdown com EXATAMENTE estas 3 colunas:
-Classificação | Descrição | Valor
+FORMATO DE SAÍDA — Tabela Markdown:
 
-Onde:
+COLUNAS FIXAS:
 - Classificação = código numérico hierárquico da conta, SE existir no PDF (ex: 1, 1.1, 1.1.01, 3.1.2).
   Se o PDF NÃO contiver códigos de classificação, deixe a coluna VAZIA.
 - Descrição = nome/descrição da conta (ex: Receita Operacional Bruta, Caixa e Equivalentes).
-- Valor = valor numérico no formato brasileiro.
-- Se houver múltiplas colunas de período (ex: "2025" e "2024"), inclua todas após Descrição.
+
+COLUNAS DE VALOR (uma por período presente no documento):
+- Se o documento tem UM único período: use uma coluna chamada "Valor".
+- Se o documento é COMPARATIVO (múltiplos períodos lado a lado): use uma coluna por período,
+  com o nome do período como cabeçalho (ex: "Dez/2024", "Dez/2025" ou "31/12/2024", "31/12/2025").
+- NUNCA misture valores de períodos diferentes na mesma coluna.
+- O período mais RECENTE deve ser a ÚLTIMA coluna de valor.
+
+EXEMPLOS DE CABEÇALHO:
+Documento com 1 período:
+| Classificação | Descrição | Valor |
+
+Documento comparativo com 2 períodos:
+| Classificação | Descrição | 31/12/2024 | 31/12/2025 |
+
+Documento comparativo sem classificação:
+| Descrição | Dez/2024 | Dez/2025 |
 
 VALORES NUMÉRICOS:
 - Valores EXATOS: não arredonde, não omita casas decimais.

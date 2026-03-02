@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -22,7 +23,10 @@ from app.services.gemini_client import (
 from app.services.anthropic_client import (
     extrair_balancete_anthropic, extrair_demonstracao_anthropic,
 )
-from app.services.formatter import formatar_dre, formatar_balanco, formatar_balancete
+from app.services.formatter import (
+    formatar_dre, formatar_balanco, formatar_balancete,
+    formatar_dre_multi, formatar_balanco_multi,
+)
 from app.services.validator import validate
 from app.services.exporter import export_excel_multi, export_csv, export_raw_excel, export_raw_csv
 from app.services.adobe_ocr import has_native_text, ocr_with_adobe
@@ -238,50 +242,50 @@ def _process_single_file(
             continue
 
         # --- ETAPA 3: Formatação (Python, sem IA) ---
+        # Usa funções _multi para DRE/Balanço (detectam multi-período automaticamente)
         progress.stage = "formatting"
         progress.stage_detail = f"Formatando {tipo} ({i}/{len(demonstracoes)})"
         logger.info("[%s] Formatando %s (Python)...", file_info.name, tipo)
 
         if tipo == "balancete":
-            dados = formatar_balancete(extract_result.text, empresa=empresa, periodo=periodo)
+            dados_list = [formatar_balancete(extract_result.text, empresa=empresa, periodo=periodo)]
         elif tipo == "dre":
-            dados = formatar_dre(extract_result.text, empresa=empresa, periodo=periodo)
+            dados_list = formatar_dre_multi(extract_result.text, empresa=empresa, periodo=periodo)
         elif tipo == "balanco_patrimonial":
-            dados = formatar_balanco(extract_result.text, empresa=empresa, data_ref=periodo)
+            dados_list = formatar_balanco_multi(extract_result.text, empresa=empresa, data_ref=periodo)
         else:
-            dados = {"empresa": empresa, "periodo": periodo}
+            dados_list = [{"empresa": empresa, "periodo": periodo}]
 
-        # Enriquece dados
-        dados["empresa"] = empresa
-        if periodo and "periodo" not in dados:
-            dados["periodo"] = periodo
+        # --- ETAPA 4: Validação (para cada período detectado) ---
+        for dados in dados_list:
+            dados["empresa"] = empresa
+            periodo_used = dados.get("periodo", dados.get("data_referencia", periodo))
 
-        # --- ETAPA 4: Validação ---
-        progress.stage = "validating"
-        progress.stage_detail = f"Validando {tipo}"
-        logger.info("[%s] Validando %s...", file_info.name, tipo)
+            progress.stage = "validating"
+            progress.stage_detail = f"Validando {tipo} ({periodo_used})"
+            logger.info("[%s] Validando %s (%s)...", file_info.name, tipo, periodo_used)
 
-        validacao = validate(dados, tipo)
+            validacao = validate(dados, tipo)
 
-        if not validacao.passed:
-            logger.warning(
-                "[%s] Validação de %s falhou: %s",
-                file_info.name, tipo, validacao.errors,
-            )
+            if not validacao.passed:
+                logger.warning(
+                    "[%s] Validação de %s (%s) falhou: %s",
+                    file_info.name, tipo, periodo_used, validacao.errors,
+                )
+                todas_observacoes.extend(
+                    [f"[{tipo} {periodo_used}] {e}" for e in validacao.errors]
+                )
+
             todas_observacoes.extend(
-                [f"[{tipo}] {e}" for e in validacao.errors]
+                [f"[{tipo} {periodo_used}] {w}" for w in validacao.warnings]
             )
 
-        todas_observacoes.extend(
-            [f"[{tipo}] {w}" for w in validacao.warnings]
-        )
-
-        resultados.append({
-            "tipo": tipo,
-            "periodo": periodo,
-            "dados": dados,
-            "validacao_ok": validacao.passed,
-        })
+            resultados.append({
+                "tipo": tipo,
+                "periodo": periodo_used,
+                "dados": dados,
+                "validacao_ok": validacao.passed,
+            })
 
     if not resultados:
         raise ValueError("Nenhuma demonstração foi extraída com sucesso.")
@@ -307,8 +311,16 @@ def _process_single_file(
         export_excel_multi(resultados, empresa, xlsx_path)
         progress.output_files.append(xlsx_path.name)
 
+        tipo_counts: dict[str, int] = {}
         for r in resultados:
-            csv_name = f"{base_name}_{r['tipo']}.csv"
+            t = r["tipo"]
+            tipo_counts[t] = tipo_counts.get(t, 0) + 1
+            if tipo_counts[t] > 1:
+                # Multi-período: adiciona período ao nome para evitar colisão
+                safe_period = re.sub(r'[/\\:*?"<>|]', '-', r.get("periodo", "")) or str(tipo_counts[t])
+                csv_name = f"{base_name}_{t}_{safe_period}.csv"
+            else:
+                csv_name = f"{base_name}_{t}.csv"
             csv_path = output_dir / csv_name
             export_csv(r["dados"], r["tipo"], csv_path)
             progress.output_files.append(csv_name)

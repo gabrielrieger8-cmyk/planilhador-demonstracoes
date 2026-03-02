@@ -2,6 +2,10 @@
 
 Converte tabelas Markdown (saída da extração) em JSON estruturado,
 fazendo em <1s o que a IA levava 10-30s.
+
+Suporta demonstrações comparativas (multi-período): quando a tabela
+extraída tem múltiplas colunas de valor (ex: Dez/2024 e Dez/2025),
+as funções _multi retornam uma lista de dicts (um por período).
 """
 
 from __future__ import annotations
@@ -102,20 +106,8 @@ def _parse_pipe_table(raw_text: str) -> list[list[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Formatar DRE
+# Detecção de colunas e headers (compartilhado)
 # ---------------------------------------------------------------------------
-
-_DRE_SUBTOTAL_KEYWORDS = [
-    "RECEITA OPERACIONAL LÍQUIDA", "RECEITA LÍQUIDA",
-    "RESULTADO BRUTO", "LUCRO BRUTO",
-    "RESULTADO OPERACIONAL", "LUCRO OPERACIONAL",
-    "RESULTADO ANTES", "LUCRO ANTES",
-    "RESULTADO LÍQUIDO", "LUCRO LÍQUIDO", "PREJUÍZO",
-    "RESULTADO DO EXERCÍCIO", "LUCRO DO EXERCÍCIO",
-    "EBITDA", "LAJIDA",
-    "TOTAL",
-]
-
 
 def _detect_classif_column(rows: list[list[str]]) -> bool:
     """Detecta se a primeira coluna contém classificações numéricas (1.1, 2.3.1, etc.)."""
@@ -139,28 +131,143 @@ def _detect_classif_column(rows: list[list[str]]) -> bool:
     return total > 0 and classif_count / total >= 0.3
 
 
-def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
-    """Converte tabela Markdown de DRE em JSON estruturado."""
-    rows = _parse_pipe_table(texto)
-    if not rows:
-        return {"empresa": empresa, "periodo": periodo, "linhas": []}
+_HEADER_KEYWORDS_DESC = ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION")
+_HEADER_KEYWORDS_CLASSIF = ("CLASSIFICAÇÃO", "CLASSIFICACAO")
+_HEADER_KEYWORDS_VALUE = ("VALOR", "VALUE")
 
-    # Pula header (primeira linha se contiver texto como "Descrição")
+# Keywords que indicam colunas NÃO-numéricas (não são períodos)
+_NON_PERIOD_KEYWORDS = (
+    "AV%", "AV %", "A.V.%", "ANÁLISE VERTICAL", "ANALISE VERTICAL",
+    "%", "PERCENTUAL",
+)
+
+
+def _analyze_header(
+    rows: list[list[str]],
+    extra_keywords: tuple[str, ...] = (),
+) -> tuple[int, bool]:
+    """Analisa header da tabela e retorna (start_index, has_classif).
+
+    Args:
+        rows: Linhas da tabela parseada.
+        extra_keywords: Keywords adicionais para detecção de header.
+    """
+    all_keywords = _HEADER_KEYWORDS_DESC + _HEADER_KEYWORDS_CLASSIF + extra_keywords
     start = 0
     header_has_classif = False
-    if rows and any(
-        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION",
-                       "CLASSIFICAÇÃO", "CLASSIFICACAO")
-        for h in rows[0]
-    ):
+
+    if rows and any(h.upper() in all_keywords for h in rows[0]):
         header_has_classif = any(
-            h.upper() in ("CLASSIFICAÇÃO", "CLASSIFICACAO") for h in rows[0]
+            h.upper() in _HEADER_KEYWORDS_CLASSIF for h in rows[0]
         )
         start = 1
 
-    # Detecta se tem coluna de classificação (3 colunas: Classif | Desc | Valor)
     has_classif = header_has_classif or _detect_classif_column(rows[start:])
+    return start, has_classif
 
+
+def _is_numeric_cell(text: str) -> bool:
+    """Verifica se uma célula contém um valor numérico brasileiro."""
+    text = text.strip()
+    if not text or text in ("-", "—", "–", ""):
+        return True  # vazio ou traço = zero válido
+    val, _ = _parse_br_number(text)
+    # Se parseia como zero, verifica se era realmente um zero ou texto
+    if val == 0.0:
+        cleaned = re.sub(r"[^\d]", "", text)
+        return len(cleaned) > 0  # tem dígitos = é numérico
+    return True
+
+
+def _detect_value_columns(
+    rows: list[list[str]],
+    start: int,
+    has_classif: bool,
+) -> list[tuple[int, str]]:
+    """Detecta colunas de valor na tabela (uma por período).
+
+    Returns:
+        Lista de (índice_coluna, nome_período) para cada coluna de valor.
+        Single-period: [(2, "")] com classif, [(1, "")] sem classif.
+        Multi-period: [(2, "Dez/2024"), (3, "Dez/2025")] etc.
+    """
+    base_val_idx = 2 if has_classif else 1
+
+    data_rows = rows[start:]
+    if not data_rows:
+        return [(base_val_idx, "")]
+
+    # Encontra a contagem máxima de colunas entre linhas com dados suficientes
+    col_counts = [len(r) for r in data_rows if len(r) >= base_val_idx + 1]
+    if not col_counts:
+        return [(base_val_idx, "")]
+
+    max_cols = max(col_counts)
+
+    if max_cols <= base_val_idx + 1:
+        # Apenas uma coluna de valor
+        return [(base_val_idx, "")]
+
+    # Múltiplas colunas possíveis: valida cada candidata
+    header = rows[0] if start > 0 and rows else []
+
+    candidates = []
+    for col_idx in range(base_val_idx, max_cols):
+        # Extrai nome do período do header
+        period_name = ""
+        if col_idx < len(header):
+            name = header[col_idx].strip().replace("**", "")
+            name_upper = name.upper()
+            # Ignora colunas explicitamente não-periódicas
+            if any(kw in name_upper for kw in _NON_PERIOD_KEYWORDS):
+                continue
+            if name_upper not in ("VALOR", "VALUE", ""):
+                period_name = name
+
+        # Valida: conta linhas com conteúdo numérico nesta coluna
+        numeric_count = 0
+        total_with_col = 0
+        for row in data_rows:
+            if col_idx < len(row):
+                total_with_col += 1
+                if _is_numeric_cell(row[col_idx]):
+                    numeric_count += 1
+
+        # Aceita se ≥50% das linhas que têm esta coluna são numéricas
+        if total_with_col > 0 and numeric_count / total_with_col >= 0.5:
+            candidates.append((col_idx, period_name))
+
+    if not candidates:
+        return [(base_val_idx, "")]
+
+    return candidates
+
+
+# ---------------------------------------------------------------------------
+# Formatar DRE
+# ---------------------------------------------------------------------------
+
+_DRE_SUBTOTAL_KEYWORDS = [
+    "RECEITA OPERACIONAL LÍQUIDA", "RECEITA LÍQUIDA",
+    "RESULTADO BRUTO", "LUCRO BRUTO",
+    "RESULTADO OPERACIONAL", "LUCRO OPERACIONAL",
+    "RESULTADO ANTES", "LUCRO ANTES",
+    "RESULTADO LÍQUIDO", "LUCRO LÍQUIDO", "PREJUÍZO",
+    "RESULTADO DO EXERCÍCIO", "LUCRO DO EXERCÍCIO",
+    "EBITDA", "LAJIDA",
+    "TOTAL",
+]
+
+
+def _formatar_dre_internal(
+    rows: list[list[str]],
+    start: int,
+    has_classif: bool,
+    val_col_idx: int,
+    empresa: str,
+    periodo: str,
+) -> dict:
+    """Lógica core de formatação DRE para uma coluna de valor específica."""
     linhas = []
     resultado_liquido = None
 
@@ -170,13 +277,13 @@ def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
                 continue
             classificacao = row[0].strip().replace("**", "")
             descricao_raw = row[1].strip()
-            valor_raw = row[2]
         else:
             if len(row) < 2:
                 continue
             classificacao = ""
             descricao_raw = row[0].strip()
-            valor_raw = row[1]
+
+        valor_raw = row[val_col_idx] if val_col_idx < len(row) else ""
 
         # Remove markdown bold
         descricao = descricao_raw.replace("**", "").strip()
@@ -231,6 +338,54 @@ def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
     }
 
 
+def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
+    """Converte tabela Markdown de DRE em JSON estruturado (single-period)."""
+    rows = _parse_pipe_table(texto)
+    if not rows:
+        return {"empresa": empresa, "periodo": periodo, "linhas": []}
+
+    start, has_classif = _analyze_header(rows)
+    val_col_idx = 2 if has_classif else 1
+
+    return _formatar_dre_internal(rows, start, has_classif, val_col_idx, empresa, periodo)
+
+
+def formatar_dre_multi(texto: str, empresa: str = "", periodo: str = "") -> list[dict]:
+    """Formata DRE detectando multi-período automaticamente.
+
+    Para single-period, retorna lista com 1 elemento.
+    Para comparativo, retorna um dict por período.
+    """
+    rows = _parse_pipe_table(texto)
+    if not rows:
+        return [{"empresa": empresa, "periodo": periodo, "linhas": []}]
+
+    start, has_classif = _analyze_header(rows)
+    value_columns = _detect_value_columns(rows, start, has_classif)
+
+    if len(value_columns) == 1:
+        col_idx, period_name = value_columns[0]
+        return [_formatar_dre_internal(
+            rows, start, has_classif, col_idx,
+            empresa, period_name or periodo,
+        )]
+
+    results = []
+    for col_idx, period_name in value_columns:
+        result = _formatar_dre_internal(
+            rows, start, has_classif, col_idx,
+            empresa, period_name or periodo,
+        )
+        results.append(result)
+
+    logger.info(
+        "DRE multi-período detectada: %d períodos (%s)",
+        len(results),
+        ", ".join(p for _, p in value_columns if p),
+    )
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Formatar Balanço Patrimonial
 # ---------------------------------------------------------------------------
@@ -247,36 +402,15 @@ _SUB_NAO_CIRC = (
 )
 
 
-def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
-    """Converte tabela Markdown de Balanço Patrimonial em JSON estruturado."""
-    rows = _parse_pipe_table(texto)
-    if not rows:
-        return {
-            "empresa": empresa, "data_referencia": data_ref,
-            "ativo": {"circulante": {"total": 0, "contas": []},
-                      "nao_circulante": {"total": 0, "contas": []}, "total": 0},
-            "passivo": {"circulante": {"total": 0, "contas": []},
-                        "nao_circulante": {"total": 0, "contas": []}, "total": 0},
-            "patrimonio_liquido": {"total": 0, "contas": []},
-        }
-
-    # Pula header
-    start = 0
-    header_has_classif = False
-    if rows and any(
-        h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION", "VALOR",
-                       "CLASSIFICAÇÃO", "CLASSIFICACAO")
-        for h in rows[0]
-    ):
-        header_has_classif = any(
-            h.upper() in ("CLASSIFICAÇÃO", "CLASSIFICACAO") for h in rows[0]
-        )
-        start = 1
-
-    # Detecta se tem coluna de classificação
-    has_classif = header_has_classif or _detect_classif_column(rows[start:])
-
-    # Estado de parsing
+def _formatar_balanco_internal(
+    rows: list[list[str]],
+    start: int,
+    has_classif: bool,
+    val_col_idx: int,
+    empresa: str,
+    data_ref: str,
+) -> dict:
+    """Lógica core de formatação Balanço para uma coluna de valor específica."""
     secao = None  # "ativo", "passivo", "pl"
     subsecao = None  # "circulante", "nao_circulante"
 
@@ -305,11 +439,11 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
                 continue
             classificacao_raw = row[0].strip().replace("**", "")
             descricao_raw = row[1].strip()
-            valor_col = row[2] if len(row) >= 3 else ""
         else:
             classificacao_raw = ""
             descricao_raw = row[0].strip()
-            valor_col = row[1] if len(row) >= 2 else ""
+
+        valor_col = row[val_col_idx] if val_col_idx < len(row) else ""
 
         descricao = descricao_raw.replace("**", "").strip()
         if not descricao:
@@ -387,7 +521,6 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
         conta = {"descricao": descricao, "valor": valor, "nivel": 3}
         if classificacao_raw:
             conta["classificacao"] = classificacao_raw
-        is_bold = "**" in descricao_raw
 
         if secao == "pl":
             result["patrimonio_liquido"]["contas"].append(conta)
@@ -401,6 +534,73 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
 
     return result
 
+
+def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
+    """Converte tabela Markdown de Balanço Patrimonial em JSON estruturado (single-period)."""
+    rows = _parse_pipe_table(texto)
+    if not rows:
+        return {
+            "empresa": empresa, "data_referencia": data_ref,
+            "ativo": {"circulante": {"total": 0, "contas": []},
+                      "nao_circulante": {"total": 0, "contas": []}, "total": 0},
+            "passivo": {"circulante": {"total": 0, "contas": []},
+                        "nao_circulante": {"total": 0, "contas": []}, "total": 0},
+            "patrimonio_liquido": {"total": 0, "contas": []},
+        }
+
+    start, has_classif = _analyze_header(rows, extra_keywords=("VALOR",))
+    val_col_idx = 2 if has_classif else 1
+
+    return _formatar_balanco_internal(rows, start, has_classif, val_col_idx, empresa, data_ref)
+
+
+def formatar_balanco_multi(texto: str, empresa: str = "", data_ref: str = "") -> list[dict]:
+    """Formata Balanço detectando multi-período automaticamente.
+
+    Para single-period, retorna lista com 1 elemento.
+    Para comparativo, retorna um dict por período.
+    """
+    rows = _parse_pipe_table(texto)
+    empty = {
+        "empresa": empresa, "data_referencia": data_ref,
+        "ativo": {"circulante": {"total": 0, "contas": []},
+                  "nao_circulante": {"total": 0, "contas": []}, "total": 0},
+        "passivo": {"circulante": {"total": 0, "contas": []},
+                    "nao_circulante": {"total": 0, "contas": []}, "total": 0},
+        "patrimonio_liquido": {"total": 0, "contas": []},
+    }
+    if not rows:
+        return [empty]
+
+    start, has_classif = _analyze_header(rows, extra_keywords=("VALOR",))
+    value_columns = _detect_value_columns(rows, start, has_classif)
+
+    if len(value_columns) == 1:
+        col_idx, period_name = value_columns[0]
+        return [_formatar_balanco_internal(
+            rows, start, has_classif, col_idx,
+            empresa, period_name or data_ref,
+        )]
+
+    results = []
+    for col_idx, period_name in value_columns:
+        result = _formatar_balanco_internal(
+            rows, start, has_classif, col_idx,
+            empresa, period_name or data_ref,
+        )
+        results.append(result)
+
+    logger.info(
+        "Balanço multi-período detectado: %d períodos (%s)",
+        len(results),
+        ", ".join(p for _, p in value_columns if p),
+    )
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Helpers Balanço
+# ---------------------------------------------------------------------------
 
 def _normalize_accents(text: str) -> str:
     """Remove acentos comuns para comparação."""
@@ -467,6 +667,13 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
                                               "SALDO", "DÉBITO", "DEBITO")):
             start = 1
 
+    # Keywords que identificam linhas de header repetidas (quebra de página)
+    _HEADER_KW = {
+        "CÓDIGO", "CODIGO", "CLASSIFICAÇÃO", "CLASSIFICACAO",
+        "DESCRIÇÃO", "DESCRICAO", "SALDO", "DÉBITO", "DEBITO",
+        "CRÉDITO", "CREDITO", "TIPO", "CONTA", "NOME",
+    }
+
     contas = []
     total_debitos = 0.0
     total_creditos = 0.0
@@ -480,6 +687,11 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
         classificacao = row[1].strip()
         descricao = row[2].strip().replace("**", "")
         tipo_raw = row[3].strip().upper()
+
+        # Pula linhas de header repetidas (quebra de página no PDF)
+        row_upper_set = {c.strip().upper() for c in row if c.strip()}
+        if row_upper_set & _HEADER_KW and not any(c.strip()[:1].isdigit() for c in row[:2] if c.strip()):
+            continue
 
         if not codigo and not descricao:
             continue

@@ -181,3 +181,96 @@ Teste end-to-end com 9 balancetes reais, correcao de bugs encontrados, processam
 - Testar waitlist com >10 arquivos para verificar reordenacao e cancelamento
 - Calibrar tokens empiricos com dados reais de uso
 - Considerar adicionar mais modelos (Gemini 2.5 Pro, etc.)
+
+---
+
+## Sessao 4 — 2026-03-02 (continuacao)
+
+### Objetivo
+Corrigir processamento de demonstracoes comparativas (multi-periodo). O PDF da TONIOLO, BUSNELLO com Balanco e DRE comparativos (Dez/24 e Dez/25) saiu todo errado: datas nao reconhecidas, Passivo/PL errados, DRE vazia.
+
+### Diagnostico
+- **Balanco**: validacao falhou com `Ativo (563M) != Passivo+PL (674M)` — valores misturados entre colunas Dez/24 e Dez/25
+- **DRE**: CSV com apenas 1 linha — parser nao conseguiu interpretar tabela de 4 colunas
+- **Classificador**: retornou `periodo=31/12/2025` — ignorou periodo comparativo Dez/24
+- **Causa raiz**: prompt de extracao pedia "EXATAMENTE 3 colunas" mas tambem "inclua multiplos periodos", e o formatter so lia `row[2]` como valor
+
+### O que foi feito
+
+**1. Fix: prompt de extracao (system_demonstracao_gemini.txt)**
+- Removida contradicao "EXATAMENTE 3 colunas" vs "inclua multiplos periodos"
+- Instrucoes claras: 1 periodo → `Classificacao | Descricao | Valor`; comparativo → `Classificacao | Descricao | Dez/2024 | Dez/2025`
+- Exemplos explicitos para cada cenario
+
+**2. Classificador com consciencia de comparativos (system_classifier.txt)**
+- Novo campo `comparativo: true/false` no JSON de cada demonstracao
+- Campo `periodo` agora aceita multiplos periodos: "31/12/2024 e 31/12/2025"
+- Nota sobre demonstracoes comparativas brasileiras
+
+**3. Formatter multi-periodo (formatter.py) — mudanca principal**
+- Nova funcao `_detect_value_columns()`: detecta automaticamente quantas colunas de valor a tabela tem, extrai nomes dos periodos dos headers, filtra colunas nao-numericas (ex: AV%)
+- Nova funcao `_analyze_header()`: analise compartilhada de header (start, has_classif)
+- Refatoracao: logica core extraida para `_formatar_dre_internal()` e `_formatar_balanco_internal()` com parametro `val_col_idx`
+- Novas funcoes publicas `formatar_dre_multi()` e `formatar_balanco_multi()` que retornam `list[dict]` (1 por periodo)
+- Funcoes originais `formatar_dre()` e `formatar_balanco()` inalteradas (backward compatible)
+
+**4. Pipeline multi-periodo (pipeline.py)**
+- Usa `formatar_dre_multi` e `formatar_balanco_multi` em vez das funcoes originais
+- Loop de validacao por periodo (cada periodo validado independentemente)
+- Fix CSV naming: quando ha duplicata de tipo, adiciona periodo ao nome do arquivo
+
+**5. Testes (test_formatter.py)**
+- 21 novos testes: DRE multi-periodo, Balanco multi-periodo, edge cases
+- Edge cases: 3 periodos, headers de secao sem valor, coluna AV% ignorada, texto vazio
+- Total: 53 testes passando (28 formatter + 13 exporter + 12 validator)
+
+### Arquivos modificados
+- `app/prompts/system_demonstracao_gemini.txt` — instrucoes claras para multi-coluna
+- `app/prompts/system_classifier.txt` — campo comparativo, periodos multiplos
+- `app/services/formatter.py` — _detect_value_columns, _analyze_header, funcoes _internal e _multi
+- `app/services/pipeline.py` — imports _multi, loop validacao por periodo, fix CSV naming
+- `tests/test_formatter.py` — 21 novos testes multi-periodo
+
+### Decisoes tecnicas
+- Abordagem "split at formatter level": o Gemini retorna tabela multi-coluna, e o formatter Python detecta e separa cada periodo automaticamente
+- Funcoes _multi retornam sempre list[dict] (1 elemento para single-period) — pipeline trata uniformemente
+- Deteccao de colunas de valor valida que >=50% das linhas tem conteudo numerico (evita falso positivo com colunas de texto)
+- Funcoes originais formatar_dre/formatar_balanco mantidas intactas para nao quebrar outros callers
+
+### Pendencias / Proximos passos
+- Reprocessar PDF da TONIOLO para validar fix end-to-end
+- Testar com outros PDFs comparativos (3+ periodos)
+- Considerar tratar sinal de "Prejuizos Acumulados" no Balanco (abs() pode ser incorreto)
+
+---
+
+## Sessao 5 — 2026-03-02 (continuacao)
+
+### Objetivo
+Fix: linhas de header repetidas em balancetes (quebra de pagina no PDF).
+
+### O que foi feito
+
+**1. Fix: headers repetidos em balancetes**
+- Na extracao pagina-por-pagina, o Gemini repete o header (Codigo, Classificacao, Descricao...) no inicio de cada pagina
+- Adicionada deteccao de linhas de header no loop principal de `formatar_balancete()`
+- Set `_HEADER_KW` com keywords de header (CODIGO, CLASSIFICACAO, DESCRICAO, SALDO, DEBITO, CREDITO, etc.)
+- Logica: se a linha contem keywords de header E as primeiras 2 colunas nao comecam com digito → pula a linha
+- Isso preserva contas reais que contenham palavras como "SALDO" na descricao
+
+**2. Testes**
+- 3 novos testes em `TestBalanceteRepeatedHeaders`: header nao aparece nas contas, contagem correta, valores corretos
+- Total: 56 testes passando (31 formatter + 13 exporter + 12 validator)
+
+### Arquivos modificados
+- `app/services/formatter.py` — `_HEADER_KW` set + logica de skip no loop de `formatar_balancete()`
+- `tests/test_formatter.py` — import `formatar_balancete`, fixture `BALANCETE_WITH_REPEATED_HEADERS`, classe `TestBalanceteRepeatedHeaders`
+
+### Decisoes tecnicas
+- Deteccao por keywords em vez de comparacao exata (cobre variacoes de acentuacao e maiusculas/minusculas)
+- Condicao adicional "primeiras 2 colunas nao comecam com digito" evita falso positivo com contas que contenham palavras do header
+
+### Pendencias / Proximos passos
+- Reiniciar servico `balancetes.service` (requer sudo)
+- Reprocessar PDF da TONIOLO para validar fixes end-to-end
+- Testar com outros PDFs comparativos

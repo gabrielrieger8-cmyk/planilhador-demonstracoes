@@ -157,7 +157,7 @@ def classificar_documento(
             client,
             model=modelo,
             contents=[pdf_part, system_prompt],
-            max_tokens=2000,
+            max_tokens=8192,
             temperature=0.1,
             response_mime_type="application/json",
         )
@@ -747,10 +747,20 @@ def _robust_json_parse(text: str) -> dict:
 
 def _try_repair_json(text: str) -> str | None:
     """Tenta reparar JSON truncado fechando chaves/colchetes pendentes."""
-    # Remove trailing comma ou texto incompleto após última vírgula
-    text = re.sub(r',\s*$', '', text)
-    # Remove string incompleta no final (chave ou valor sem fechar aspas)
-    text = re.sub(r',?\s*"[^"]*$', '', text)
+    # Limpeza iterativa de conteúdo truncado no final
+    for _ in range(5):
+        prev = text
+        text = text.rstrip()
+        # Remove trailing comma
+        text = re.sub(r',\s*$', '', text)
+        # Remove string incompleta no final (chave ou valor sem fechar aspas)
+        text = re.sub(r',?\s*"[^"]*$', '', text)
+        text = text.rstrip()
+        # Remove chave pendurada após remoção de valor: "key":
+        text = re.sub(r',?\s*"[^"]*"\s*:\s*$', '', text)
+        text = text.rstrip()
+        if text == prev:
+            break
 
     # Conta chaves e colchetes abertos
     opens = []
