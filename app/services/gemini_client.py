@@ -147,28 +147,46 @@ def classificar_documento(
     pdf_bytes = Path(pdf_path).read_bytes()
     pdf_part = types.Part.from_bytes(data=pdf_bytes, mime_type="application/pdf")
 
-    response = _call_gemini(
-        client,
-        model=modelo,
-        contents=[pdf_part, system_prompt],
-        max_tokens=2000,
-        temperature=0.1,
-        response_mime_type="application/json",
-    )
+    # Retry para lidar com respostas truncadas/mal-formadas sob carga
+    max_json_retries = 3
+    last_error = None
+    total_inp, total_out = 0, 0
 
-    inp, out = _get_usage(response)
-    custo = calcular_custo_gemini(
-        {"input_tokens": inp, "output_tokens": out}, modelo
-    )
+    for json_attempt in range(max_json_retries):
+        response = _call_gemini(
+            client,
+            model=modelo,
+            contents=[pdf_part, system_prompt],
+            max_tokens=2000,
+            temperature=0.1,
+            response_mime_type="application/json",
+        )
 
-    texto = response.text or ""
-    dados = _robust_json_parse(texto)
+        inp, out = _get_usage(response)
+        total_inp += inp
+        total_out += out
 
-    return {
-        **dados,
-        "custo_usd": custo,
-        "usage": {"input_tokens": inp, "output_tokens": out},
-    }
+        texto = response.text or ""
+        try:
+            dados = _robust_json_parse(texto)
+            custo = calcular_custo_gemini(
+                {"input_tokens": total_inp, "output_tokens": total_out}, modelo
+            )
+            return {
+                **dados,
+                "custo_usd": custo,
+                "usage": {"input_tokens": total_inp, "output_tokens": total_out},
+            }
+        except ValueError as exc:
+            last_error = exc
+            logger.warning(
+                "Classificação: JSON parse falhou (tentativa %d/%d): %s",
+                json_attempt + 1, max_json_retries, str(exc)[:100],
+            )
+            if json_attempt < max_json_retries - 1:
+                time.sleep(1)
+
+    raise last_error
 
 
 # ---------------------------------------------------------------------------
@@ -681,14 +699,23 @@ def _deduplicate_batch_lines(batch_text: str) -> str:
 
 
 def _robust_json_parse(text: str) -> dict:
-    """Tenta parsear JSON da resposta do Gemini."""
+    """Tenta parsear JSON da resposta do Gemini.
+
+    Estratégias (em ordem):
+    1. Parse direto
+    2. Extrair de bloco ```json```
+    3. Encontrar { ... } no texto
+    4. Tentar reparar JSON truncado (fechar chaves/colchetes)
+    """
     text = text.strip()
 
+    # 1. Parse direto
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
 
+    # 2. Bloco markdown ```json```
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
     if match:
         try:
@@ -696,6 +723,7 @@ def _robust_json_parse(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # 3. Encontrar { ... }
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
@@ -704,4 +732,54 @@ def _robust_json_parse(text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # 4. Tentar reparar JSON truncado
+    if start != -1:
+        candidate = text[start:]
+        candidate = _try_repair_json(candidate)
+        if candidate:
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass
+
     raise ValueError(f"Não foi possível extrair JSON da resposta: {text[:200]}...")
+
+
+def _try_repair_json(text: str) -> str | None:
+    """Tenta reparar JSON truncado fechando chaves/colchetes pendentes."""
+    # Remove trailing comma ou texto incompleto após última vírgula
+    text = re.sub(r',\s*$', '', text)
+    # Remove string incompleta no final (chave ou valor sem fechar aspas)
+    text = re.sub(r',?\s*"[^"]*$', '', text)
+
+    # Conta chaves e colchetes abertos
+    opens = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ('{', '['):
+            opens.append(ch)
+        elif ch == '}' and opens and opens[-1] == '{':
+            opens.pop()
+        elif ch == ']' and opens and opens[-1] == '[':
+            opens.pop()
+
+    if not opens:
+        return None  # Já está balanceado, o problema é outro
+
+    # Fecha na ordem inversa
+    for bracket in reversed(opens):
+        text += ']' if bracket == '[' else '}'
+
+    return text
