@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import os
 import secrets
-import hmac
-import hashlib
 import time
 from pathlib import Path
 
@@ -87,17 +87,32 @@ app.add_middleware(SSOAuthMiddleware)
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# Cache-busting: hash dos arquivos estáticos calculado no startup
+_static_version = ""
+
+
+def _compute_static_version() -> str:
+    """Gera hash curto baseado no conteúdo dos arquivos estáticos."""
+    h = hashlib.md5()
+    for f in sorted(STATIC_DIR.glob("*.*")):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:8]
+
 
 @app.on_event("startup")
 def startup():
+    global _static_version
     logger.info("Inicializando banco de dados...")
     init_db(DATABASE_URL)
-    logger.info("Planilhador de Demonstrações pronto.")
+    _static_version = _compute_static_version()
+    logger.info("Planilhador de Demonstrações pronto. (static v=%s)", _static_version)
 
 
 @app.get("/")
 async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    html = html.replace("?v=HASH", f"?v={_static_version}")
+    return Response(html, media_type="text/html")
 
 
 @app.get("/models")

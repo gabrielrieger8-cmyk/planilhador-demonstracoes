@@ -112,3 +112,72 @@ Correcao de bugs + suporte Anthropic completo + estimativa de custo.
 ### Pendencias / Proximos passos
 - Calibrar tokens empiricos com dados reais de uso
 - Considerar adicionar mais modelos (Gemini 2.5 Pro, etc.)
+
+---
+
+## Sessao 3 — 2026-03-02
+
+### Objetivo
+Teste end-to-end com 9 balancetes reais, correcao de bugs encontrados, processamento paralelo e consolidacao multi-periodo.
+
+### O que foi feito
+
+**1. Fix: coluna Classificacao ausente no Excel de balancetes**
+- formatter.py extraia a classificacao corretamente, mas exporter.py nao incluia na saida
+- Adicionada "Classificacao" como segunda coluna em BALANCETE_COLUMNS
+- Atualizados todos os indices dependentes (colunas numericas, alinhamento, formulas SUM, letras de coluna)
+- CSV tambem atualizado para incluir classificacao
+
+**2. Processamento paralelo com ThreadPoolExecutor**
+- Pipeline reescrito: de sequencial para paralelo com ate 10 workers simultaneos
+- Fila gerenciada manualmente no Job (queue + queue_lock + active_count)
+- threading.Event para sinalizar conclusao de todos os arquivos
+- Tempo de 9 PDFs (66 paginas) caiu de ~23min para ~4min
+
+**3. Waitlist visual com reordenacao e cancelamento**
+- Backend: campos queue/queue_lock/active_count/file_results no Job
+- Backend: endpoints POST /queue/reorder e POST /queue/cancel
+- Backend: queue_position no payload SSE para cada arquivo
+- Frontend: arquivos agrupados por status (processando, na fila, concluidos, erros, cancelados)
+- Frontend: botoes seta cima/baixo para reordenar + botao X para cancelar
+- CSS: estilos para grupos, badges de posicao, status cancelado
+
+**4. Fix: erro de parse JSON na classificacao paralela**
+- Gemini API retornava JSON envolto em blocos ```json quando multiplas requests simultaneas
+- Corrigido adicionando response_mime_type="application/json" na chamada de classificacao
+- Parametro propagado na funcao _call_gemini
+
+**5. Excel consolidado multi-periodo**
+- Ao processar multiplos PDFs, gera "Consolidado.xlsx" com todos os periodos como abas
+- Funcao _consolidate_excel() roda apos todos os arquivos completarem
+- Resultados armazenados em job.file_results para consolidacao
+
+**6. Fix: corrupcao de Excel por nomes de aba duplicados**
+- Nomes como "EMPRESA LTDA - Balancete - 01/2025" truncados a 31 chars ficavam identicos
+- Criada _short_tab_name() que usa apenas tipo + periodo (sem empresa)
+- Criada _unique_tab_name() que garante unicidade com sufixo numerico
+
+### Arquivos modificados
+- `app/jobs.py` — campos queue, queue_lock, active_count, file_results; status "cancelled"
+- `app/services/pipeline.py` — reescrita completa: fila gerenciada, paralelo, _consolidate_excel
+- `app/services/exporter.py` — coluna Classificacao, _short_tab_name, _unique_tab_name, formulas SUM atualizadas
+- `app/services/formatter.py` — deteccao de coluna classificacao em DRE e Balanco
+- `app/services/gemini_client.py` — response_mime_type em _call_gemini e classificacao
+- `app/routes/progress.py` — endpoints reorder/cancel, queue_position no SSE, ReorderRequest
+- `static/app.js` — grupos visuais, controles de fila, PARALLEL_WORKERS, estimativa atualizada
+- `static/style.css` — estilos para fila, grupos, cancelado, botoes de acao
+- `tests/test_formatter.py` — novo arquivo com testes do formatter
+
+### Decisoes tecnicas
+- Fila gerenciada manualmente (em vez de submeter tudo ao ThreadPoolExecutor) para permitir reordenacao e cancelamento em tempo real
+- response_mime_type="application/json" forca Gemini a retornar JSON puro sem markdown
+- Nomes de aba curtos (tipo + periodo) para multi-tab, nomes longos (com empresa) para single-tab
+- threading.Event em vez de polling para aguardar conclusao de todos os workers
+
+### Commits
+- `e7a5f4f` — feat: processamento paralelo, waitlist com controle de fila, coluna Classificacao e Excel consolidado
+
+### Pendencias / Proximos passos
+- Testar waitlist com >10 arquivos para verificar reordenacao e cancelamento
+- Calibrar tokens empiricos com dados reais de uso
+- Considerar adicionar mais modelos (Gemini 2.5 Pro, etc.)
