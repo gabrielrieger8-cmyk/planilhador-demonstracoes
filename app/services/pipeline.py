@@ -30,6 +30,8 @@ from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 logger = logging.getLogger("planilhador")
 
 MAX_WORKERS = 10
+# Limita classificações simultâneas para evitar respostas truncadas da API
+_classify_semaphore = threading.Semaphore(5)
 
 
 def _api_key_for(model: str | None) -> str:
@@ -135,14 +137,15 @@ def _process_single_file(
 
     is_anthropic_extractor = extractor_model and extractor_model.startswith("claude-")
 
-    # --- ETAPA 1: Classificação ---
+    # --- ETAPA 1: Classificação (com semáforo para limitar concorrência) ---
     progress.stage = "classifying"
     progress.stage_detail = "Identificando demonstrações..."
     logger.info("[%s] Classificando com %s...", file_info.name, classifier_model)
 
-    classificacao = classificar(
-        pdf_path, api_key=_api_key_for(classifier_model), model=classifier_model
-    )
+    with _classify_semaphore:
+        classificacao = classificar(
+            pdf_path, api_key=_api_key_for(classifier_model), model=classifier_model
+        )
     demonstracoes = classificacao.get("demonstracoes", [])
     empresa = classificacao.get("empresa", "")
     custo_total += classificacao.get("custo_usd", 0)
