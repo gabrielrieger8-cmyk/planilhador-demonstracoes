@@ -391,6 +391,7 @@ h2 {
 
 .progress-item.done { border-color: #bbf7d0; background: #f0fdf4; }
 .progress-item.error { border-color: #fecaca; background: #fef2f2; }
+.progress-item.cancelled { border-color: #e5e7eb; background: #f9fafb; opacity: 0.6; }
 
 .status-icon { width: 1.2rem; text-align: center; }
 
@@ -481,6 +482,79 @@ h2 {
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 300px;
+}
+
+/* Progress Group Headers */
+.progress-group-header {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 0.6rem 0 0.3rem;
+    margin-top: 0.4rem;
+}
+
+.progress-group-header:first-child {
+    margin-top: 0;
+}
+
+/* Queue Controls */
+.queue-position {
+    background: #fef3c7;
+    color: #92400e;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.queue-actions {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: auto;
+}
+
+.queue-btn {
+    width: 26px;
+    height: 26px;
+    border: 1px solid #d1d5db;
+    border-radius: 4px;
+    background: white;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #374151;
+    padding: 0;
+    transition: all 0.15s;
+}
+
+.queue-btn:hover:not(:disabled) {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.queue-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.queue-btn-cancel {
+    color: #ef4444;
+    border-color: #fecaca;
+}
+
+.queue-btn-cancel:hover:not(:disabled) {
+    background: #fef2f2;
+    border-color: #ef4444;
+}
+
+.cancelled-text {
+    text-decoration: line-through;
+    color: #9ca3af;
 }
 
 /* Results */

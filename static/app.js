@@ -57,6 +57,7 @@ const TIME_PER_PAGE = {
     classifier: 1,
     extractor: 20,
 };
+const PARALLEL_WORKERS = 10;
 
 const STAGE_NAMES = {
     classifier: 'Classificação',
@@ -91,10 +92,11 @@ async function updateEstimate() {
         let totalCost = 0;
         let totalTime = 0;
 
+        const parallelFactor = Math.min(uploadedFiles.length, PARALLEL_WORKERS);
         const stages = ['classifier', 'extractor'];
         stages.forEach(stage => {
             const cost = data[stage] || 0;
-            const time = (TIME_PER_PAGE[stage] || 0) * totalPages;
+            const time = Math.round((TIME_PER_PAGE[stage] || 0) * totalPages / parallelFactor);
             totalCost += cost;
             totalTime += time;
 
@@ -346,49 +348,169 @@ function renderProgress(data) {
         document.getElementById('elapsed-timer').textContent = formatTime(data.elapsed);
     }
 
+    // Agrupa arquivos por status
+    const processing = data.progress.filter(p => p.status === 'processing');
+    const queued = data.progress.filter(p => p.status === 'pending' && p.queue_position != null);
+    const done = data.progress.filter(p => p.status === 'done');
+    const errors = data.progress.filter(p => p.status === 'error');
+    const cancelled = data.progress.filter(p => p.status === 'cancelled');
+
     const details = document.getElementById('progress-details');
     details.innerHTML = '';
 
-    data.progress.forEach(p => {
-        const div = document.createElement('div');
-        div.className = `progress-item ${p.status}`;
+    // Grupo: Em processamento
+    if (processing.length > 0) {
+        _appendGroupHeader(details, `Em processamento (${processing.length})`);
+        processing.forEach(p => details.appendChild(_buildProgressItem(p, data)));
+    }
 
-        let iconHtml = '';
-        if (p.status === 'pending') iconHtml = '<span class="pulse-dot"></span>';
-        else if (p.status === 'processing') iconHtml = '<span class="spinner"></span>';
-        else if (p.status === 'done') iconHtml = '<span class="check-icon">✓</span>';
-        else if (p.status === 'error') iconHtml = '<span style="color:#e53935;">✗</span>';
+    // Grupo: Na fila
+    if (queued.length > 0) {
+        _appendGroupHeader(details, `Na fila (${queued.length})`);
+        queued.sort((a, b) => a.queue_position - b.queue_position);
+        queued.forEach(p => details.appendChild(_buildProgressItem(p, data)));
+    }
 
-        let rightHtml = '';
-        if (p.status === 'pending') {
-            rightHtml = '<span class="stage-info">Na fila...</span>';
-        } else if (p.status === 'processing') {
-            const icon = STAGE_ICONS[p.stage] || '';
-            const label = STAGE_LABELS[p.stage] || p.stage;
-            rightHtml = `
-                <span class="stage-badge ${p.stage}">${icon} ${label}</span>
-                <span class="stage-info">${p.stage_detail || ''}</span>
-            `;
-        } else if (p.status === 'done') {
-            rightHtml = `
-                <span class="done-info">
-                    <span>${p.time.toFixed(1)}s</span>
-                    <span>·</span>
-                    <span>${formatBRL(p.cost)}</span>
-                </span>
-            `;
-        } else if (p.status === 'error') {
-            rightHtml = `<span class="error-info" title="${p.error || ''}">${p.error || 'Erro'}</span>`;
-        }
+    // Grupo: Concluídos
+    if (done.length > 0) {
+        _appendGroupHeader(details, `Concluídos (${done.length})`);
+        done.forEach(p => details.appendChild(_buildProgressItem(p, data)));
+    }
 
-        div.innerHTML = `
-            <span class="status-icon">${iconHtml}</span>
-            <span class="filename">${p.filename}</span>
-            <span class="pages-badge">${p.pages || 0}p</span>
-            ${rightHtml}
+    // Grupo: Erros
+    if (errors.length > 0) {
+        _appendGroupHeader(details, `Erros (${errors.length})`);
+        errors.forEach(p => details.appendChild(_buildProgressItem(p, data)));
+    }
+
+    // Grupo: Cancelados
+    if (cancelled.length > 0) {
+        _appendGroupHeader(details, `Cancelados (${cancelled.length})`);
+        cancelled.forEach(p => details.appendChild(_buildProgressItem(p, data)));
+    }
+}
+
+function _appendGroupHeader(container, text) {
+    const header = document.createElement('div');
+    header.className = 'progress-group-header';
+    header.textContent = text;
+    container.appendChild(header);
+}
+
+function _buildProgressItem(p, data) {
+    const div = document.createElement('div');
+    div.className = `progress-item ${p.status}`;
+
+    let iconHtml = '';
+    if (p.status === 'pending') iconHtml = '<span class="pulse-dot"></span>';
+    else if (p.status === 'processing') iconHtml = '<span class="spinner"></span>';
+    else if (p.status === 'done') iconHtml = '<span class="check-icon">✓</span>';
+    else if (p.status === 'error') iconHtml = '<span style="color:#e53935;">✗</span>';
+    else if (p.status === 'cancelled') iconHtml = '<span style="color:#9ca3af;">⊘</span>';
+
+    let rightHtml = '';
+    if (p.status === 'pending') {
+        const queuedItems = data.progress.filter(x => x.status === 'pending' && x.queue_position != null);
+        const isFirst = queuedItems.length > 0 && p.queue_position === 1;
+        const isLast = queuedItems.length > 0 && p.queue_position === queuedItems.length;
+
+        rightHtml = `
+            <span class="queue-position">Posição ${p.queue_position}</span>
+            <span class="queue-actions">
+                <button class="queue-btn" ${isFirst ? 'disabled' : ''} onclick="moveInQueue(${p.idx}, -1)" title="Mover para cima">↑</button>
+                <button class="queue-btn" ${isLast ? 'disabled' : ''} onclick="moveInQueue(${p.idx}, 1)" title="Mover para baixo">↓</button>
+                <button class="queue-btn queue-btn-cancel" onclick="cancelFromQueue(${p.idx})" title="Cancelar">✕</button>
+            </span>
         `;
-        details.appendChild(div);
+    } else if (p.status === 'processing') {
+        const icon = STAGE_ICONS[p.stage] || '';
+        const label = STAGE_LABELS[p.stage] || p.stage;
+        rightHtml = `
+            <span class="stage-badge ${p.stage}">${icon} ${label}</span>
+            <span class="stage-info">${p.stage_detail || ''}</span>
+        `;
+    } else if (p.status === 'done') {
+        rightHtml = `
+            <span class="done-info">
+                <span>${p.time.toFixed(1)}s</span>
+                <span>·</span>
+                <span>${formatBRL(p.cost)}</span>
+            </span>
+        `;
+    } else if (p.status === 'error') {
+        rightHtml = `<span class="error-info" title="${p.error || ''}">${p.error || 'Erro'}</span>`;
+    } else if (p.status === 'cancelled') {
+        rightHtml = '<span class="stage-info cancelled-text">Cancelado</span>';
+    }
+
+    div.innerHTML = `
+        <span class="status-icon">${iconHtml}</span>
+        <span class="filename">${p.filename}</span>
+        <span class="pages-badge">${p.pages || 0}p</span>
+        ${rightHtml}
+    `;
+    return div;
+}
+
+// ---------------------------------------------------------------------------
+// Queue control
+// ---------------------------------------------------------------------------
+
+async function moveInQueue(fileIdx, direction) {
+    if (!jobId) return;
+    try {
+        // Busca fila atual do último render
+        const resp = await fetch(`/progress/${jobId}`);
+        // Não podemos usar SSE aqui, vamos manipular a fila diretamente
+        // Pega a fila atual do backend
+        const queueResp = await fetch(`/queue/reorder/${jobId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ order: _reorderQueue(fileIdx, direction) }),
+        });
+        if (!queueResp.ok) {
+            console.error('Erro ao reordenar fila:', await queueResp.text());
+        }
+    } catch (err) {
+        console.error('Erro ao reordenar:', err);
+    }
+}
+
+function _reorderQueue(fileIdx, direction) {
+    // Reconstrói a fila a partir dos dados do último render
+    const details = document.getElementById('progress-details');
+    const queueBtns = details.querySelectorAll('.queue-btn[onclick*="moveInQueue"]');
+    // Extrai índices dos itens na fila na ordem atual
+    const queueItems = [];
+    details.querySelectorAll('.progress-item.pending').forEach(item => {
+        const btn = item.querySelector('.queue-btn-cancel');
+        if (btn) {
+            const match = btn.getAttribute('onclick').match(/cancelFromQueue\((\d+)\)/);
+            if (match) queueItems.push(parseInt(match[1]));
+        }
     });
+
+    const pos = queueItems.indexOf(fileIdx);
+    if (pos === -1) return queueItems;
+
+    const newPos = pos + direction;
+    if (newPos < 0 || newPos >= queueItems.length) return queueItems;
+
+    // Swap
+    [queueItems[pos], queueItems[newPos]] = [queueItems[newPos], queueItems[pos]];
+    return queueItems;
+}
+
+async function cancelFromQueue(fileIdx) {
+    if (!jobId) return;
+    try {
+        const resp = await fetch(`/queue/cancel/${jobId}/${fileIdx}`, { method: 'POST' });
+        if (!resp.ok) {
+            console.error('Erro ao cancelar:', await resp.text());
+        }
+    } catch (err) {
+        console.error('Erro ao cancelar:', err);
+    }
 }
 
 // ---------------------------------------------------------------------------

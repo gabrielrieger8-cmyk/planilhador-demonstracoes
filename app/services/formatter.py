@@ -147,15 +147,19 @@ def formatar_dre(texto: str, empresa: str = "", periodo: str = "") -> dict:
 
     # Pula header (primeira linha se contiver texto como "Descrição")
     start = 0
+    header_has_classif = False
     if rows and any(
         h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION",
                        "CLASSIFICAÇÃO", "CLASSIFICACAO")
         for h in rows[0]
     ):
+        header_has_classif = any(
+            h.upper() in ("CLASSIFICAÇÃO", "CLASSIFICACAO") for h in rows[0]
+        )
         start = 1
 
     # Detecta se tem coluna de classificação (3 colunas: Classif | Desc | Valor)
-    has_classif = _detect_classif_column(rows[start:])
+    has_classif = header_has_classif or _detect_classif_column(rows[start:])
 
     linhas = []
     resultado_liquido = None
@@ -258,15 +262,19 @@ def formatar_balanco(texto: str, empresa: str = "", data_ref: str = "") -> dict:
 
     # Pula header
     start = 0
+    header_has_classif = False
     if rows and any(
         h.upper() in ("DESCRIÇÃO", "DESCRICAO", "CONTA", "DESCRIPTION", "VALOR",
                        "CLASSIFICAÇÃO", "CLASSIFICACAO")
         for h in rows[0]
     ):
+        header_has_classif = any(
+            h.upper() in ("CLASSIFICAÇÃO", "CLASSIFICACAO") for h in rows[0]
+        )
         start = 1
 
     # Detecta se tem coluna de classificação
-    has_classif = _detect_classif_column(rows[start:])
+    has_classif = header_has_classif or _detect_classif_column(rows[start:])
 
     # Estado de parsing
     secao = None  # "ativo", "passivo", "pl"

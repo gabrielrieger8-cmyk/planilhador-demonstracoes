@@ -67,6 +67,29 @@ def _build_title(empresa: str, tipo: str, periodo: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _unique_tab_name(name: str, used: set[str]) -> str:
+    """Garante nome de aba único, adicionando sufixo se necessário."""
+    base = _sanitize_tab_name(name)
+    if base not in used:
+        used.add(base)
+        return base
+    for n in range(2, 100):
+        suffix = f" ({n})"
+        candidate = _sanitize_tab_name(name[:31 - len(suffix)] + suffix)
+        if candidate not in used:
+            used.add(candidate)
+            return candidate
+    return base
+
+
+def _short_tab_name(tipo: str, periodo: str) -> str:
+    """Nome curto para aba: 'Balancete - 01.2025'."""
+    label = TIPO_LABELS.get(tipo, tipo)
+    if periodo:
+        return f"{label} - {periodo}"
+    return label
+
+
 def export_excel_multi(
     demonstracoes: list[dict],
     empresa: str,
@@ -84,13 +107,20 @@ def export_excel_multi(
     """
     wb = Workbook()
     default_ws = wb.active
+    used_names: set[str] = set()
+    is_multi = len(demonstracoes) > 1
 
     for i, demo in enumerate(demonstracoes):
         tipo = demo["tipo"]
         periodo = demo.get("periodo", "")
         dados = demo.get("dados", {})
 
-        tab_name = _sanitize_tab_name(_build_title(empresa, tipo, periodo))
+        # Para multi-aba, usa nome curto (sem empresa) para caber em 31 chars
+        if is_multi:
+            raw_name = _short_tab_name(tipo, periodo)
+        else:
+            raw_name = _build_title(empresa, tipo, periodo)
+        tab_name = _unique_tab_name(raw_name, used_names)
 
         if i == 0:
             default_ws.title = tab_name
@@ -137,11 +167,11 @@ def export_csv(dados: dict, tipo: str, output_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 BALANCETE_COLUMNS = [
-    "Código", "Descrição", "Nível", "Natureza",
+    "Código", "Classificação", "Descrição", "Nível", "Natureza",
     "Saldo Anterior", "Débitos", "Créditos", "Saldo Atual",
 ]
-BALANCETE_NUMERIC_COLS = {4, 5, 6, 7}
-BALANCETE_COL_WIDTHS = {0: 14, 1: 42, 2: 8, 3: 10, 4: 18, 5: 18, 6: 18, 7: 18}
+BALANCETE_NUMERIC_COLS = {5, 6, 7, 8}
+BALANCETE_COL_WIDTHS = {0: 14, 1: 18, 2: 42, 3: 8, 4: 10, 5: 18, 6: 18, 7: 18, 8: 18}
 
 
 def _write_balancete(ws, dados: dict, titulo: str) -> None:
@@ -175,6 +205,7 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
     for conta in contas:
         row = [
             conta.get("codigo_conta", ""),
+            conta.get("classificacao", ""),
             conta.get("descricao", ""),
             conta.get("nivel", ""),
             conta.get("natureza", ""),
@@ -201,7 +232,7 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
             if col_idx in BALANCETE_NUMERIC_COLS:
                 cell.number_format = BR_NUMBER_FORMAT
                 cell.alignment = RIGHT_ALIGN
-            elif col_idx in (2, 3):
+            elif col_idx in (3, 4):
                 cell.alignment = CENTER_ALIGN
             else:
                 cell.alignment = LEFT_ALIGN
@@ -227,8 +258,8 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
                     child_rows.append(child_row)
 
         if child_rows:
-            # Colunas numéricas: E (Saldo Ant), F (Déb), G (Créd), H (Saldo Atual)
-            for col_letter in ("E", "F", "G", "H"):
+            # Colunas numéricas: F (Saldo Ant), G (Déb), H (Créd), I (Saldo Atual)
+            for col_letter in ("F", "G", "H", "I"):
                 refs = "+".join(f"{col_letter}{r}" for r in sorted(child_rows))
                 ws.cell(row=parent_row, column=_col_idx(col_letter)).value = f"={refs}"
 
@@ -257,6 +288,7 @@ def _export_balancete_csv(dados: dict, output_path: Path) -> Path:
         for conta in contas:
             writer.writerow([
                 conta.get("codigo_conta", ""),
+                conta.get("classificacao", ""),
                 conta.get("descricao", ""),
                 conta.get("nivel", ""),
                 conta.get("natureza", ""),

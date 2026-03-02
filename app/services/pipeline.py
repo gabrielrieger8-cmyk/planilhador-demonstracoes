@@ -7,7 +7,9 @@ Formatação feita em Python (sem chamada de IA) para máxima velocidade.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
+import threading
 import time
 from pathlib import Path
 
@@ -27,6 +29,8 @@ from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 
 logger = logging.getLogger("planilhador")
 
+MAX_WORKERS = 10
+
 
 def _api_key_for(model: str | None) -> str:
     """Retorna a API key correta para o modelo."""
@@ -36,12 +40,24 @@ def _api_key_for(model: str | None) -> str:
 
 
 def process_job(job: Job) -> None:
-    """Processa todos os arquivos de um job.
+    """Processa todos os arquivos de um job em paralelo com fila gerenciada.
 
     Roda em thread background via run_in_executor.
+    Usa ThreadPoolExecutor com fila controlada para permitir
+    reordenação e cancelamento em tempo real.
     """
+    done_event = threading.Event()
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS)
+
     try:
-        for idx, file_info in enumerate(job.files):
+        # Inicializa a fila com todos os índices
+        with job.queue_lock:
+            job.queue = list(range(len(job.files)))
+            job.active_count = 0
+            job.file_results = []
+
+        def _process_one(idx: int) -> None:
+            file_info = job.files[idx]
             progress = job.progress[idx]
             progress.status = "processing"
             start_time = time.time()
@@ -55,7 +71,40 @@ def process_job(job: Job) -> None:
                 progress.error = str(exc)[:500]
 
             progress.time = round(time.time() - start_time, 2)
-            job.completed = idx + 1
+
+            with job.queue_lock:
+                job.completed += 1
+                job.active_count -= 1
+                _submit_next()
+
+        def _submit_next() -> None:
+            """Submete próximos da fila. Deve ser chamado com queue_lock."""
+            while job.queue and job.active_count < MAX_WORKERS:
+                idx = job.queue.pop(0)
+                # Pula cancelados
+                if job.progress[idx].status == "cancelled":
+                    job.completed += 1
+                    continue
+                job.active_count += 1
+                pool.submit(_process_one, idx)
+
+            # Se não há mais nada rodando nem na fila, sinaliza fim
+            if job.active_count == 0 and not job.queue:
+                done_event.set()
+
+        # Dispara lote inicial
+        with job.queue_lock:
+            _submit_next()
+
+        # Aguarda todos terminarem
+        done_event.wait()
+
+        # --- Consolidação: Excel multi-aba com todos os períodos ---
+        if not job.skip_format and len(job.file_results) > 1:
+            try:
+                _consolidate_excel(job)
+            except Exception as exc:
+                logger.warning("Erro ao gerar Excel consolidado: %s", exc)
 
         job.status = "done"
         logger.info("Job %s concluído: %d arquivos.", job.id, job.total)
@@ -64,6 +113,8 @@ def process_job(job: Job) -> None:
         logger.exception("Erro no job %s: %s", job.id, exc)
         job.status = "error"
         job.error = str(exc)[:500]
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _process_single_file(
@@ -261,7 +312,40 @@ def _process_single_file(
 
     progress.cost = round(custo_total, 6)
 
+    # Guarda resultados formatados para consolidação multi-aba
+    if not job.skip_format and resultados:
+        with job.queue_lock:
+            job.file_results.append({
+                "filename": file_info.name,
+                "empresa": empresa,
+                "resultados": resultados,
+            })
+
     logger.info(
         "[%s] Concluído: %d demonstração(ões), custo=$%.6f",
         file_info.name, len(resultados), custo_total,
+    )
+
+
+def _consolidate_excel(job: Job) -> None:
+    """Gera Excel consolidado com uma aba por período (todos os arquivos)."""
+    output_dir = job.output_dir
+    # Ordena por nome do arquivo para manter ordem cronológica
+    sorted_results = sorted(job.file_results, key=lambda r: r["filename"])
+
+    all_demos = []
+    empresa = ""
+    for fr in sorted_results:
+        empresa = empresa or fr["empresa"]
+        for r in fr["resultados"]:
+            all_demos.append(r)
+
+    if not all_demos:
+        return
+
+    consolidated_path = output_dir / "Consolidado.xlsx"
+    export_excel_multi(all_demos, empresa, consolidated_path)
+    logger.info(
+        "Excel consolidado gerado: %s (%d abas)",
+        consolidated_path, len(all_demos),
     )

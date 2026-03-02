@@ -1,7 +1,9 @@
-"""Rota SSE para progresso em tempo real.
+"""Rota SSE para progresso em tempo real + controle de fila.
 
 GET /progress/{job_id} — Server-Sent Events com estado atual.
 POST /process/{job_id} — Inicia processamento em background.
+POST /queue/reorder/{job_id} — Reordena fila de espera.
+POST /queue/cancel/{job_id}/{file_idx} — Cancela arquivo da fila.
 """
 
 from __future__ import annotations
@@ -27,6 +29,10 @@ class ProcessRequest(BaseModel):
     extractor: Optional[str] = None
     formatter: Optional[str] = None
     skip_format: bool = False
+
+
+class ReorderRequest(BaseModel):
+    order: list[int]
 
 router = APIRouter()
 
@@ -90,25 +96,36 @@ async def progress_sse(job_id: str):
         while True:
             elapsed = time.time() - job.started_at if job.started_at > 0 else 0
 
+            # Snapshot da fila para incluir posição
+            with job.queue_lock:
+                queue_snapshot = list(job.queue)
+
+            progress_list = []
+            for idx, p in enumerate(job.progress):
+                try:
+                    qpos = queue_snapshot.index(idx) + 1
+                except ValueError:
+                    qpos = None
+                progress_list.append({
+                    "idx": idx,
+                    "filename": p.filename,
+                    "pages": p.pages,
+                    "status": p.status,
+                    "stage": p.stage,
+                    "stage_detail": p.stage_detail,
+                    "error": p.error,
+                    "output_files": p.output_files,
+                    "cost": p.cost,
+                    "time": p.time,
+                    "queue_position": qpos,
+                })
+
             data = {
                 "status": job.status,
                 "completed": job.completed,
                 "total": job.total,
                 "elapsed": round(elapsed, 1),
-                "progress": [
-                    {
-                        "filename": p.filename,
-                        "pages": p.pages,
-                        "status": p.status,
-                        "stage": p.stage,
-                        "stage_detail": p.stage_detail,
-                        "error": p.error,
-                        "output_files": p.output_files,
-                        "cost": p.cost,
-                        "time": p.time,
-                    }
-                    for p in job.progress
-                ],
+                "progress": progress_list,
             }
 
             snapshot = json.dumps(data, ensure_ascii=False)
@@ -130,3 +147,40 @@ async def progress_sse(job_id: str):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/queue/reorder/{job_id}")
+async def reorder_queue(job_id: str, body: ReorderRequest):
+    """Reordena a fila de espera."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+
+    with job.queue_lock:
+        current_set = set(job.queue)
+        new_set = set(body.order)
+        if new_set != current_set:
+            raise HTTPException(
+                400,
+                f"Índices inválidos. Esperado: {sorted(current_set)}, recebido: {sorted(new_set)}",
+            )
+        job.queue = body.order
+
+    return {"status": "ok", "queue": body.order}
+
+
+@router.post("/queue/cancel/{job_id}/{file_idx}")
+async def cancel_queued_file(job_id: str, file_idx: int):
+    """Cancela um arquivo que está na fila (não em processamento)."""
+    job = jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job não encontrado.")
+
+    with job.queue_lock:
+        if file_idx not in job.queue:
+            raise HTTPException(400, "Arquivo não está na fila.")
+        job.queue.remove(file_idx)
+        job.progress[file_idx].status = "cancelled"
+        job.completed += 1
+
+    return {"status": "cancelled", "file_idx": file_idx}

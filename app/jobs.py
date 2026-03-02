@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,7 +21,7 @@ class JobProgress:
     """Progresso de um arquivo individual."""
     filename: str
     pages: int = 0
-    status: str = "pending"  # pending | processing | done | error
+    status: str = "pending"  # pending | processing | done | error | cancelled
     stage: str = ""  # classifying | extracting | formatting | validating | exporting
     stage_detail: str = ""
     error: str | None = None
@@ -49,6 +50,12 @@ class Job:
         "extractor": "gemini-2.5-flash",
         "formatter": "gemini-2.5-flash",
     })
+    # Fila gerenciada para controle de waitlist
+    queue: list[int] = field(default_factory=list)
+    queue_lock: threading.Lock = field(default_factory=threading.Lock)
+    active_count: int = 0
+    # Resultados por arquivo para consolidação multi-aba
+    file_results: list[list[dict]] = field(default_factory=list)
 
 
 # Store global

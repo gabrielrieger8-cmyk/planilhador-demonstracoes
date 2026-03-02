@@ -77,17 +77,21 @@ def _call_gemini(
     max_tokens: int = 65000,
     temperature: float = 0.1,
     max_retries: int = 5,
+    response_mime_type: str | None = None,
 ):
     """Chama Gemini com retry e exponential backoff."""
     for attempt in range(max_retries):
         try:
+            config = {
+                "temperature": temperature,
+                "max_output_tokens": max_tokens,
+            }
+            if response_mime_type:
+                config["response_mime_type"] = response_mime_type
             response = client.models.generate_content(
                 model=model,
                 contents=contents,
-                config={
-                    "temperature": temperature,
-                    "max_output_tokens": max_tokens,
-                },
+                config=config,
             )
             return response
         except Exception as exc:
@@ -149,6 +153,7 @@ def classificar_documento(
         contents=[pdf_part, system_prompt],
         max_tokens=2000,
         temperature=0.1,
+        response_mime_type="application/json",
     )
 
     inp, out = _get_usage(response)
