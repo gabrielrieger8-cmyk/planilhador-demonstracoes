@@ -16,6 +16,7 @@ from pathlib import Path
 
 from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY, ADOBE_CLIENT_ID, ADOBE_CLIENT_SECRET
 from app.jobs import Job, JobProgress
+from app.main import _post_to_portal, APP_NAME
 from app.services.classifier import classificar
 from app.services.gemini_client import (
     extrair_balancete, extrair_demonstracao,
@@ -141,10 +142,21 @@ def _process_single_file(
 
     is_anthropic_extractor = extractor_model and extractor_model.startswith("claude-")
 
+    db_file_id = getattr(file_info, "db_file_id", None)
+
+    def _log_stage(stage, message, level="info", detail=None):
+        _post_to_portal("processing-log", {
+            "uploaded_file_id": db_file_id, "app": APP_NAME,
+            "stage": stage, "level": level,
+            "message": f"[{file_info.name}] {message}",
+            "detail": detail,
+        })
+
     # --- ETAPA 1: Classificação (com semáforo para limitar concorrência) ---
     progress.stage = "classifying"
     progress.stage_detail = "Identificando demonstrações..."
     logger.info("[%s] Classificando com %s...", file_info.name, classifier_model)
+    _log_stage("classification", f"Classificando com {classifier_model}")
 
     with _classify_semaphore:
         classificacao = classificar(
@@ -155,7 +167,10 @@ def _process_single_file(
     custo_total += classificacao.get("custo_usd", 0)
 
     if not demonstracoes:
+        _log_stage("classification", "Nenhuma demonstração reconhecida", level="error")
         raise ValueError("Nenhuma demonstração financeira reconhecida no PDF.")
+
+    _log_stage("classification", f"Classificação OK: {[d['tipo'] for d in demonstracoes]}")
 
     tipos = [d["tipo"] for d in demonstracoes]
     logger.info(
@@ -326,6 +341,26 @@ def _process_single_file(
             progress.output_files.append(csv_name)
 
     progress.cost = round(custo_total, 6)
+
+    # Register outputs in Portal DB
+    import shutil
+    from datetime import date
+    perm_dir = Path("/home/gabriel/mirar-data/files") / APP_NAME / date.today().isoformat()
+    perm_dir.mkdir(parents=True, exist_ok=True)
+    for out_name in progress.output_files:
+        out_path = output_dir / out_name
+        if out_path.exists():
+            perm_out = perm_dir / f"{job.id}_{out_name}"
+            shutil.copy2(str(out_path), str(perm_out))
+            _post_to_portal("outputs", {
+                "uploaded_file_id": db_file_id, "app": APP_NAME,
+                "output_filename": out_name, "stored_path": str(perm_out),
+                "file_size_bytes": out_path.stat().st_size,
+                "processing_time_seconds": progress.time,
+                "processing_cost_usd": custo_total,
+            })
+
+    _log_stage("export", f"Processamento concluído: {len(resultados)} demonstrações, custo=${custo_total:.6f}")
 
     # Guarda resultados formatados para consolidação multi-aba
     if not job.skip_format and resultados:

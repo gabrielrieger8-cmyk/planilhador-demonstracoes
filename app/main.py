@@ -7,9 +7,11 @@ import hashlib
 import hmac
 import os
 import secrets
+import threading
 import time
 from pathlib import Path
 
+import requests as http_requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse
@@ -31,6 +33,25 @@ AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")
 AUTH_COOKIE_SECRET = os.getenv("AUTH_COOKIE_SECRET", "")
 COOKIE_NAME = "mirar_session"
 LOGIN_URL = "https://mirarprojetos.dev/login"
+
+PORTAL_API_URL = os.getenv("PORTAL_API_URL", "http://127.0.0.1:5001")
+INTERNAL_API_KEY = os.getenv("INTERNAL_API_KEY", "")
+APP_NAME = "demo-contabil"
+
+
+def _post_to_portal(endpoint, data):
+    """Fire-and-forget POST to Portal internal API."""
+    def _send():
+        try:
+            http_requests.post(
+                f"{PORTAL_API_URL}/api/{endpoint}",
+                json=data,
+                headers={"X-Internal-Key": INTERNAL_API_KEY},
+                timeout=5,
+            )
+        except Exception:
+            pass
+    threading.Thread(target=_send, daemon=True).start()
 
 
 def verify_sso_cookie(cookie_value, secret):
@@ -57,9 +78,16 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         if not AUTH_USERNAME:
             return await call_next(request)
+        username = None
         # 1) Check SSO cookie
         cookie = request.cookies.get(COOKIE_NAME)
-        if verify_sso_cookie(cookie, AUTH_COOKIE_SECRET):
+        username = verify_sso_cookie(cookie, AUTH_COOKIE_SECRET)
+        if username:
+            _post_to_portal("log", {
+                "username": username, "app": APP_NAME,
+                "action": "page_view", "detail": {"path": str(request.url.path)},
+                "ip_address": request.client.host if request.client else None,
+            })
             return await call_next(request)
         # 2) Check Basic Auth
         auth_header = request.headers.get("Authorization", "")
@@ -69,6 +97,11 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                 user, pwd = decoded.split(":", 1)
                 if (secrets.compare_digest(user, AUTH_USERNAME)
                         and secrets.compare_digest(pwd, AUTH_PASSWORD)):
+                    _post_to_portal("log", {
+                        "username": user, "app": APP_NAME,
+                        "action": "page_view", "detail": {"path": str(request.url.path)},
+                        "ip_address": request.client.host if request.client else None,
+                    })
                     return await call_next(request)
         # 3) Redirect browser or 401 for API
         accept = request.headers.get("Accept", "")
@@ -144,6 +177,18 @@ async def estimate(body: dict):
         "formatter": body.get("formatter", FORMATTER_MODEL),
     }
     return estimar_custo(total_pages, models)
+
+
+@app.post("/feedback")
+async def feedback(body: dict):
+    """Proxy feedback to Portal internal API."""
+    _post_to_portal("feedback", {
+        "app": APP_NAME,
+        "rating": body.get("rating"),
+        "missing_info": body.get("missing_info"),
+        "context": body.get("context"),
+    })
+    return {"ok": True}
 
 
 # Registra rotas

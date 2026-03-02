@@ -14,6 +14,7 @@ class FileInfo:
     path: Path
     pages: int = 0
     size: int = 0
+    db_file_id: int | None = None  # ID in Portal's uploaded_files table
 
 
 @dataclass

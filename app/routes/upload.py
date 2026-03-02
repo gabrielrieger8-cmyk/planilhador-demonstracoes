@@ -5,8 +5,10 @@ POST /upload — Recebe PDFs e retorna job_id com info dos arquivos.
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import uuid
+from datetime import date
 from pathlib import Path
 
 import fitz
@@ -14,20 +16,37 @@ from fastapi import APIRouter, HTTPException, UploadFile
 
 from app.config import logger
 from app.jobs import FileInfo, Job, JobProgress, jobs
+from app.main import _post_to_portal, APP_NAME
+
+STORAGE_BASE = Path("/home/gabriel/mirar-data/files")
 
 router = APIRouter()
 
 
 @router.post("/upload")
-async def upload(files: list[UploadFile]):
-    """Recebe PDFs e retorna job_id com info dos arquivos."""
+async def upload(files: list[UploadFile], existing_job_id: str | None = None):
+    """Recebe PDFs e retorna job_id com info dos arquivos.
+
+    Se existing_job_id for fornecido e o job existir, acumula os novos
+    arquivos no job existente (em vez de criar um novo).
+    """
     if not files:
         raise HTTPException(400, "Nenhum arquivo enviado.")
 
-    job_id = str(uuid.uuid4())[:8]
-    tmp_dir = Path(tempfile.mkdtemp(prefix=f"plan_{job_id}_"))
-    output_dir = tmp_dir / "output"
-    output_dir.mkdir()
+    # Accumulate files into existing job
+    if existing_job_id and existing_job_id in jobs:
+        job = jobs[existing_job_id]
+        if job.status == "processing":
+            raise HTTPException(409, "Nao pode adicionar durante processamento.")
+        job_id = existing_job_id
+        # Reuse existing tmp_dir from first file
+        tmp_dir = job.files[0].path.parent if job.files else Path(tempfile.mkdtemp(prefix=f"plan_{job_id}_"))
+        output_dir = job.output_dir
+    else:
+        job_id = str(uuid.uuid4())[:8]
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f"plan_{job_id}_"))
+        output_dir = tmp_dir / "output"
+        output_dir.mkdir()
 
     file_infos: list[FileInfo] = []
 
@@ -54,26 +73,61 @@ async def upload(files: list[UploadFile]):
             logger.warning("Erro ao abrir PDF %s: %s", safe_filename, exc)
             pages = 0
 
+        # Save to permanent storage
+        perm_dir = STORAGE_BASE / APP_NAME / date.today().isoformat()
+        perm_dir.mkdir(parents=True, exist_ok=True)
+        perm_path = perm_dir / f"{job_id}_{safe_filename}"
+        shutil.copy2(str(dest), str(perm_path))
+
+        # Register file in Portal DB (synchronous to get file_id back)
+        import requests as http_requests
+        import os
+        db_file_id = None
+        try:
+            resp = http_requests.post(
+                f"{os.getenv('PORTAL_API_URL', 'http://127.0.0.1:5001')}/api/files",
+                json={
+                    "app": APP_NAME,
+                    "original_filename": safe_filename,
+                    "stored_path": str(perm_path),
+                    "file_size_bytes": len(content),
+                    "mime_type": "application/pdf",
+                },
+                headers={"X-Internal-Key": os.getenv("INTERNAL_API_KEY", "")},
+                timeout=5,
+            )
+            if resp.ok:
+                db_file_id = resp.json().get("file_id")
+        except Exception:
+            pass
+
         file_infos.append(FileInfo(
             name=safe_filename,
             path=dest,
             pages=pages,
             size=len(content),
+            db_file_id=db_file_id,
         ))
 
     if not file_infos:
         raise HTTPException(400, "Nenhum PDF válido enviado.")
 
-    total_pages = sum(fi.pages for fi in file_infos)
-
-    job = Job(
-        id=job_id,
-        files=file_infos,
-        output_dir=output_dir,
-        total_pages=total_pages,
-        total=len(file_infos),
-    )
-    jobs[job_id] = job
+    if existing_job_id and existing_job_id in jobs:
+        # Append to existing job
+        job = jobs[existing_job_id]
+        job.files.extend(file_infos)
+        job.total = len(job.files)
+        job.total_pages = sum(f.pages for f in job.files)
+    else:
+        total_pages = sum(fi.pages for fi in file_infos)
+        job = Job(
+            id=job_id,
+            files=file_infos,
+            output_dir=output_dir,
+            total_pages=total_pages,
+            total=len(file_infos),
+        )
+        jobs[job_id] = job
 
     return {
         "job_id": job_id,
@@ -81,7 +135,7 @@ async def upload(files: list[UploadFile]):
             {"name": fi.name, "pages": fi.pages, "size": fi.size}
             for fi in file_infos
         ],
-        "total_pages": total_pages,
+        "total_pages": sum(fi.pages for fi in file_infos),
     }
 
 
