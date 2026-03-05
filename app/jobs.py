@@ -57,7 +57,7 @@ class Job:
     active_count: int = 0
     # Preferências de fórmulas por tipo de demonstração
     formula_opts: dict[str, bool] = field(default_factory=lambda: {
-        "dre": True,
+        "dre": False,
         "balanco": True,
         "balancete": False,
     })

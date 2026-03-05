@@ -142,7 +142,7 @@ def export_excel_multi(
             titulo = f"{empresa} - {label}" if empresa else label
 
             if tipo == "dre":
-                _write_dre_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("dre", True))
+                _write_dre_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("dre", False))
             else:
                 _write_balanco_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("balanco", True))
 
@@ -170,7 +170,7 @@ def export_excel_multi(
                 if tipo == "balancete":
                     _write_balancete(ws, dados, titulo, use_formulas=formula_opts.get("balancete", False))
                 elif tipo == "dre":
-                    _write_dre(ws, dados, titulo, use_formulas=formula_opts.get("dre", True))
+                    _write_dre(ws, dados, titulo, use_formulas=formula_opts.get("dre", False))
                 elif tipo == "balanco_patrimonial":
                     _write_balanco(ws, dados, titulo, use_formulas=formula_opts.get("balanco", True))
 
