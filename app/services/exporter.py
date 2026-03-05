@@ -94,51 +94,90 @@ def export_excel_multi(
     demonstracoes: list[dict],
     empresa: str,
     output_path: Path,
+    formula_opts: dict[str, bool] | None = None,
 ) -> Path:
-    """Gera Excel com 1 aba por demonstração.
+    """Gera Excel com abas agrupadas por tipo de demonstração.
+
+    Para DRE e Balanço com múltiplos períodos, coloca todos os períodos
+    lado a lado em uma única aba (formato comparativo).
 
     Args:
         demonstracoes: Lista de dicts com {tipo, periodo, dados}.
         empresa: Nome da empresa.
         output_path: Caminho para salvar o arquivo.
+        formula_opts: Dict com chaves 'dre', 'balanco', 'balancete' (bool).
 
     Returns:
         Path do arquivo gerado.
     """
+    if formula_opts is None:
+        formula_opts = {"dre": False, "balanco": True, "balancete": False}
     wb = Workbook()
     default_ws = wb.active
     used_names: set[str] = set()
-    is_multi = len(demonstracoes) > 1
 
-    for i, demo in enumerate(demonstracoes):
+    # Agrupa demonstrações por tipo, preservando ordem de aparição
+    groups: list[tuple[str, list[dict]]] = []
+    seen_tipos: dict[str, int] = {}
+    for demo in demonstracoes:
         tipo = demo["tipo"]
-        periodo = demo.get("periodo", "")
-        dados = demo.get("dados", {})
+        if tipo not in seen_tipos:
+            seen_tipos[tipo] = len(groups)
+            groups.append((tipo, []))
+        groups[seen_tipos[tipo]][1].append(demo)
 
-        # Para multi-aba, usa nome curto (sem empresa) para caber em 31 chars
-        if is_multi:
-            raw_name = _short_tab_name(tipo, periodo)
+    tab_idx = 0
+    for tipo, demos in groups:
+        # DRE/Balanço multi-período: comparativo lado a lado
+        if len(demos) > 1 and tipo in ("dre", "balanco_patrimonial"):
+            label = TIPO_LABELS.get(tipo, tipo)
+            tab_name = _unique_tab_name(label, used_names)
+
+            if tab_idx == 0:
+                default_ws.title = tab_name
+                ws = default_ws
+            else:
+                ws = wb.create_sheet(title=tab_name)
+
+            titulo = f"{empresa} - {label}" if empresa else label
+
+            if tipo == "dre":
+                _write_dre_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("dre", True))
+            else:
+                _write_balanco_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("balanco", True))
+
+            tab_idx += 1
         else:
-            raw_name = _build_title(empresa, tipo, periodo)
-        tab_name = _unique_tab_name(raw_name, used_names)
+            # Single-period ou balancete: 1 aba por demonstração
+            for demo in demos:
+                periodo = demo.get("periodo", "")
+                dados = demo.get("dados", {})
 
-        if i == 0:
-            default_ws.title = tab_name
-            ws = default_ws
-        else:
-            ws = wb.create_sheet(title=tab_name)
+                if len(demos) > 1 or len(groups) > 1:
+                    raw_name = _short_tab_name(tipo, periodo)
+                else:
+                    raw_name = _build_title(empresa, tipo, periodo)
+                tab_name = _unique_tab_name(raw_name, used_names)
 
-        titulo = _build_title(empresa, tipo, periodo)
+                if tab_idx == 0:
+                    default_ws.title = tab_name
+                    ws = default_ws
+                else:
+                    ws = wb.create_sheet(title=tab_name)
 
-        if tipo == "balancete":
-            _write_balancete(ws, dados, titulo)
-        elif tipo == "dre":
-            _write_dre(ws, dados, titulo)
-        elif tipo == "balanco_patrimonial":
-            _write_balanco(ws, dados, titulo)
+                titulo = _build_title(empresa, tipo, periodo)
+
+                if tipo == "balancete":
+                    _write_balancete(ws, dados, titulo, use_formulas=formula_opts.get("balancete", False))
+                elif tipo == "dre":
+                    _write_dre(ws, dados, titulo, use_formulas=formula_opts.get("dre", True))
+                elif tipo == "balanco_patrimonial":
+                    _write_balanco(ws, dados, titulo, use_formulas=formula_opts.get("balanco", True))
+
+                tab_idx += 1
 
     wb.save(str(output_path))
-    logger.info("Excel gerado: %s (%d aba(s))", output_path, len(demonstracoes))
+    logger.info("Excel gerado: %s (%d aba(s))", output_path, tab_idx)
     return output_path
 
 
@@ -174,8 +213,8 @@ BALANCETE_NUMERIC_COLS = {5, 6, 7, 8}
 BALANCETE_COL_WIDTHS = {0: 14, 1: 18, 2: 42, 3: 8, 4: 10, 5: 18, 6: 18, 7: 18, 8: 18}
 
 
-def _write_balancete(ws, dados: dict, titulo: str) -> None:
-    """Escreve conteúdo de balancete em um worksheet com fórmulas SUM."""
+def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -> None:
+    """Escreve conteúdo de balancete em um worksheet, opcionalmente com fórmulas SUM."""
     contas = dados.get("contas", [])
 
     ws.append([titulo])
@@ -237,31 +276,32 @@ def _write_balancete(ws, dados: dict, titulo: str) -> None:
             else:
                 cell.alignment = LEFT_ALIGN
 
-    # Segunda passada: adiciona fórmulas SUM nas totalizadoras
-    for conta in contas:
-        if not conta.get("is_totalizador"):
-            continue
-        classif = conta.get("classificacao", "")
-        parent_row = classif_to_row.get(classif)
-        if not parent_row:
-            continue
+    # Segunda passada: adiciona fórmulas SUM nas totalizadoras (se habilitado)
+    if use_formulas:
+        for conta in contas:
+            if not conta.get("is_totalizador"):
+                continue
+            classif = conta.get("classificacao", "")
+            parent_row = classif_to_row.get(classif)
+            if not parent_row:
+                continue
 
-        # Encontra filhas diretas (classificação = parent + ".XX")
-        child_rows = []
-        for other in contas:
-            other_classif = other.get("classificacao", "")
-            if (other_classif != classif
-                    and other_classif.startswith(classif + ".")
-                    and other_classif[len(classif) + 1:].count(".") == 0):
-                child_row = classif_to_row.get(other_classif)
-                if child_row:
-                    child_rows.append(child_row)
+            # Encontra filhas diretas (classificação = parent + ".XX")
+            child_rows = []
+            for other in contas:
+                other_classif = other.get("classificacao", "")
+                if (other_classif != classif
+                        and other_classif.startswith(classif + ".")
+                        and other_classif[len(classif) + 1:].count(".") == 0):
+                    child_row = classif_to_row.get(other_classif)
+                    if child_row:
+                        child_rows.append(child_row)
 
-        if child_rows:
-            # Colunas numéricas: F (Saldo Ant), G (Déb), H (Créd), I (Saldo Atual)
-            for col_letter in ("F", "G", "H", "I"):
-                refs = "+".join(f"{col_letter}{r}" for r in sorted(child_rows))
-                ws.cell(row=parent_row, column=_col_idx(col_letter)).value = f"={refs}"
+            if child_rows:
+                # Colunas numéricas: F (Saldo Ant), G (Déb), H (Créd), I (Saldo Atual)
+                for col_letter in ("F", "G", "H", "I"):
+                    refs = "+".join(f"{col_letter}{r}" for r in sorted(child_rows))
+                    ws.cell(row=parent_row, column=_col_idx(col_letter)).value = f"={refs}"
 
     for col_idx, width in BALANCETE_COL_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col_idx + 1)].width = width
@@ -310,7 +350,7 @@ DRE_COLUMNS = ["Classificação", "Descrição", "Valor", "% da Receita"]
 DRE_COL_WIDTHS = {0: 14, 1: 50, 2: 20, 3: 14}
 
 
-def _write_dre(ws, dados: dict, titulo: str) -> None:
+def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
     linhas = dados.get("linhas", [])
 
     ws.append([titulo])
@@ -349,14 +389,25 @@ def _write_dre(ws, dados: dict, titulo: str) -> None:
     if receita_bruta_row is None and linhas:
         receita_bruta_row = header_row + 1  # primeira linha de dados
 
-    # Rastreia linhas para fórmulas de subtotal
-    last_subtotal_data_row = None  # última linha de subtotal escrita
-    non_subtotal_rows = []  # linhas de detalhe desde último subtotal
+    # Rastreia linhas para fórmulas hierárquicas
+    current_grouper_row = None
+    current_grouper_children = []
+    prev_subtotal_row = None
+    subtotal_refs = []  # top-level rows entre subtotais
+
+    def _close_grouper():
+        nonlocal current_grouper_row, current_grouper_children
+        if current_grouper_row and current_grouper_children and use_formulas:
+            refs = ",".join(f"C{r}" for r in current_grouper_children)
+            ws.cell(row=current_grouper_row, column=VAL_COL).value = f"=SUM({refs})"
+        current_grouper_row = None
+        current_grouper_children = []
 
     for linha in linhas:
         valor = linha.get("valor", 0) or 0
         nivel = linha.get("nivel", 1)
         is_subtotal = linha.get("is_subtotal", False)
+        is_agrupadora = linha.get("is_agrupadora", False)
         classificacao = linha.get("classificacao", "")
 
         indent = "  " * (nivel - 1)
@@ -365,25 +416,39 @@ def _write_dre(ws, dados: dict, titulo: str) -> None:
         ws.append([classificacao, descricao, valor, 0])  # placeholder para AV%
         current_row = ws.max_row
 
-        # Fórmula AV% (Análise Vertical): =C{row}/C${receita_bruta_row}
-        pct_cell = ws.cell(row=current_row, column=PCT_COL)
-        if receita_bruta_row:
-            pct_cell.value = f"=IF(C${receita_bruta_row}=0,0,C{current_row}/C${receita_bruta_row})"
+        if use_formulas:
+            # Fórmula AV% (Análise Vertical): =C{row}/C${receita_bruta_row}
+            pct_cell = ws.cell(row=current_row, column=PCT_COL)
+            if receita_bruta_row:
+                pct_cell.value = f"=IF(C${receita_bruta_row}=0,0,C{current_row}/C${receita_bruta_row})"
 
-        # Fórmula de subtotal: =SUM das linhas de detalhe acima
-        if is_subtotal and non_subtotal_rows:
-            sum_refs = ",".join(f"C{r}" for r in non_subtotal_rows)
-            if last_subtotal_data_row:
-                # Soma detalhe + subtotal anterior
-                sum_refs = f"C{last_subtotal_data_row}," + ",".join(f"C{r}" for r in non_subtotal_rows)
-            ws.cell(row=current_row, column=VAL_COL).value = f"=SUM({sum_refs})"
-            last_subtotal_data_row = current_row
-            non_subtotal_rows = []
-        elif is_subtotal:
-            last_subtotal_data_row = current_row
-            non_subtotal_rows = []
-        else:
-            non_subtotal_rows.append(current_row)
+            if is_subtotal:
+                _close_grouper()
+                # Subtotal = prev_subtotal + top-level rows entre eles
+                all_refs = []
+                if prev_subtotal_row:
+                    all_refs.append(prev_subtotal_row)
+                all_refs.extend(subtotal_refs)
+                if all_refs:
+                    refs_str = ",".join(f"C{r}" for r in all_refs)
+                    ws.cell(row=current_row, column=VAL_COL).value = f"=SUM({refs_str})"
+                prev_subtotal_row = current_row
+                subtotal_refs = []
+            elif is_agrupadora:
+                _close_grouper()
+                current_grouper_row = current_row
+                current_grouper_children = []
+                subtotal_refs.append(current_row)
+            elif nivel == 1:
+                # nivel=1 não-subtotal, não-agrupadora (ex: RECEITA BRUTA)
+                _close_grouper()
+                subtotal_refs.append(current_row)
+            else:
+                # nivel=2 detail (folha) — mantém valor hardcoded do PDF
+                if current_grouper_row:
+                    current_grouper_children.append(current_row)
+                else:
+                    subtotal_refs.append(current_row)
 
         # Estilo
         for col_idx in range(len(DRE_COLUMNS)):
@@ -407,8 +472,197 @@ def _write_dre(ws, dados: dict, titulo: str) -> None:
                 cell.number_format = '0.0%'
                 cell.alignment = RIGHT_ALIGN
 
+    _close_grouper()  # finaliza última agrupadora pendente
+
     for col_idx, width in DRE_COL_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col_idx + 1)].width = width
+
+    ws.freeze_panes = f"A{header_row + 1}"
+
+
+def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas: bool = True) -> None:
+    """Escreve DRE comparativa com períodos lado a lado + AV% + Variação."""
+    periodos = []
+    all_linhas = []
+    for demo in demos_list:
+        dados = demo.get("dados", {})
+        periodo = demo.get("periodo", dados.get("periodo", ""))
+        periodos.append(periodo)
+        all_linhas.append(dados.get("linhas", []))
+
+    num_periods = len(periodos)
+
+    # Layout de colunas: Descrição | Per1 | AV | Per2 | AV | ... | Variação
+    # Coluna de valor do período p: 2 + p*2 (B, D, F, ...)
+    # Coluna AV% do período p: 3 + p*2 (C, E, G, ...)
+    # Coluna Variação: 2 + num_periods*2 (última coluna)
+    def val_col(p: int) -> int:
+        return 2 + p * 2
+
+    def av_col(p: int) -> int:
+        return 3 + p * 2
+
+    var_col_idx = 2 + num_periods * 2
+    num_cols = var_col_idx  # total de colunas (incluindo variação)
+
+    # Headers
+    headers = [""]
+    for p_name in periodos:
+        headers.append(p_name)
+        headers.append("AV")
+    headers.append("VARIAÇÃO")
+
+    # Título
+    ws.append([titulo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
+    ws["A1"].font = Font(name="Calibri", bold=True, size=14)
+    ws.append([])
+
+    # Headers
+    ws.append(headers)
+    header_row = ws.max_row
+    for col_idx in range(num_cols):
+        cell = ws.cell(row=header_row, column=col_idx + 1)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
+        cell.border = THIN_BORDER
+
+    # Usa primeiro período como template para descrições
+    template = all_linhas[0] if all_linhas else []
+
+    # Primeira passada: encontra a receita bruta para AV%
+    receita_bruta_offset = None
+    for idx, linha in enumerate(template):
+        desc = (linha.get("descricao") or "").upper()
+        if "RECEITA" in desc and ("BRUTA" in desc or "OPERACIONAL BRUTA" in desc):
+            receita_bruta_offset = idx
+            break
+    if receita_bruta_offset is None and template:
+        receita_bruta_offset = 0
+    receita_bruta_row = header_row + 1 + receita_bruta_offset if receita_bruta_offset is not None else None
+
+    # Rastreia rows para fórmulas hierárquicas
+    current_grouper_row = None
+    current_grouper_children = []
+    prev_subtotal_row = None
+    subtotal_refs = []  # top-level rows entre subtotais
+
+    def _close_current_grouper():
+        nonlocal current_grouper_row, current_grouper_children
+        if current_grouper_row and current_grouper_children and use_formulas:
+            for p in range(num_periods):
+                col = val_col(p)
+                cl = get_column_letter(col)
+                refs = ",".join(f"{cl}{r}" for r in current_grouper_children)
+                ws.cell(row=current_grouper_row, column=col).value = f"=SUM({refs})"
+        current_grouper_row = None
+        current_grouper_children = []
+
+    for row_idx, linha in enumerate(template):
+        nivel = linha.get("nivel", 1)
+        is_subtotal = linha.get("is_subtotal", False)
+        is_agrupadora = linha.get("is_agrupadora", False)
+        indent = "  " * (nivel - 1)
+        descricao = f"{indent}{linha.get('descricao', '')}"
+
+        # Monta row: [desc, val1, av1, val2, av2, ..., variação]
+        row_data = [descricao]
+        for p in range(num_periods):
+            linhas_p = all_linhas[p]
+            val = linhas_p[row_idx].get("valor", 0) or 0 if row_idx < len(linhas_p) else 0
+            row_data.append(val)   # valor
+            row_data.append(0)     # placeholder AV%
+        row_data.append(0)         # placeholder Variação
+
+        ws.append(row_data)
+        current_row = ws.max_row
+
+        if use_formulas:
+            # Fórmulas AV% para cada período
+            for p in range(num_periods):
+                vc = val_col(p)
+                ac = av_col(p)
+                vl = get_column_letter(vc)
+                if receita_bruta_row:
+                    rb_letter = get_column_letter(val_col(p))
+                    ws.cell(row=current_row, column=ac).value = (
+                        f"=IF({rb_letter}${receita_bruta_row}=0,0,"
+                        f"{vl}{current_row}/{rb_letter}${receita_bruta_row})"
+                    )
+
+            # Fórmula Variação: (último_período - primeiro_período) / ABS(primeiro_período)
+            if num_periods >= 2:
+                first_vl = get_column_letter(val_col(0))
+                last_vl = get_column_letter(val_col(num_periods - 1))
+                ws.cell(row=current_row, column=var_col_idx).value = (
+                    f"=IF(ABS({first_vl}{current_row})=0,0,"
+                    f"({last_vl}{current_row}-{first_vl}{current_row})"
+                    f"/ABS({first_vl}{current_row}))"
+                )
+
+            if is_subtotal:
+                _close_current_grouper()
+                # Subtotal = prev_subtotal + top-level rows entre eles
+                all_refs = []
+                if prev_subtotal_row:
+                    all_refs.append(prev_subtotal_row)
+                all_refs.extend(subtotal_refs)
+                if all_refs:
+                    for p in range(num_periods):
+                        col = val_col(p)
+                        cl = get_column_letter(col)
+                        refs_str = ",".join(f"{cl}{r}" for r in all_refs)
+                        ws.cell(row=current_row, column=col).value = f"=SUM({refs_str})"
+                prev_subtotal_row = current_row
+                subtotal_refs = []
+            elif is_agrupadora:
+                _close_current_grouper()
+                current_grouper_row = current_row
+                current_grouper_children = []
+                subtotal_refs.append(current_row)
+            elif nivel == 1:
+                _close_current_grouper()
+                subtotal_refs.append(current_row)
+            else:
+                # nivel=2 detail (folha) — mantém valor hardcoded do PDF
+                if current_grouper_row:
+                    current_grouper_children.append(current_row)
+                else:
+                    subtotal_refs.append(current_row)
+
+        # Estilo
+        for col_idx in range(num_cols):
+            cell = ws.cell(row=current_row, column=col_idx + 1)
+            cell.border = THIN_BORDER
+
+            if is_subtotal or nivel <= 1:
+                cell.font = AGRUPADORA_FONT
+                cell.fill = AGRUPADORA_FILL
+            else:
+                cell.font = NORMAL_FONT
+
+            if col_idx == 0:
+                cell.alignment = LEFT_ALIGN
+            else:
+                cell.alignment = RIGHT_ALIGN
+                # Colunas de valor: formato número
+                col_num = col_idx + 1
+                is_av = any(col_num == av_col(p) for p in range(num_periods))
+                is_var = col_num == var_col_idx
+                if is_av or is_var:
+                    cell.number_format = '0.0%'
+                else:
+                    cell.number_format = BR_NUMBER_FORMAT
+
+    _close_current_grouper()  # finaliza última agrupadora pendente
+
+    # Larguras
+    ws.column_dimensions["A"].width = 50
+    for p in range(num_periods):
+        ws.column_dimensions[get_column_letter(val_col(p))].width = 20
+        ws.column_dimensions[get_column_letter(av_col(p))].width = 10
+    ws.column_dimensions[get_column_letter(var_col_idx)].width = 12
 
     ws.freeze_panes = f"A{header_row + 1}"
 
@@ -440,7 +694,7 @@ BALANCO_COLUMNS = ["Classificação", "Descrição", "Valor"]
 BALANCO_COL_WIDTHS = {0: 14, 1: 50, 2: 20}
 
 
-def _write_balanco(ws, dados: dict, titulo: str) -> None:
+def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
     VAL_COL = 3  # coluna C (Valor)
 
     ws.append([titulo])
@@ -469,8 +723,9 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
         ws.cell(row=row_num, column=VAL_COL).alignment = RIGHT_ALIGN
 
     def _write_section(title: str, section: dict, section_key: str):
-        # Header da seção com placeholder para fórmula SUM
-        ws.append(["", title, 0])
+        # Header da seção: fórmula ou valor estático
+        section_total = section.get("total", 0) or 0
+        ws.append(["", title, 0 if use_formulas else section_total])
         section_row = ws.max_row
         section_total_rows[section_key] = section_row
         _style_section_row(section_row)
@@ -483,7 +738,8 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                 continue
 
             sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
-            ws.append(["", f"  {sub_title}", 0])  # placeholder
+            sub_total = sub.get("total", 0) or 0
+            ws.append(["", f"  {sub_title}", 0 if use_formulas else sub_total])
             sub_header_row = ws.max_row
             sub_total_rows[(section_key, sub_key)] = sub_header_row
             sub_rows_for_section.append(sub_header_row)
@@ -515,66 +771,129 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
                         cell.alignment = RIGHT_ALIGN
 
             # Fórmula SUM no header da subsecção
-            if conta_rows:
+            if use_formulas and conta_rows:
                 first_r, last_r = conta_rows[0], conta_rows[-1]
                 ws.cell(row=sub_header_row, column=VAL_COL).value = f"=SUM(C{first_r}:C{last_r})"
 
         # Fórmula SUM no header da seção (soma das subsecções)
-        if sub_rows_for_section:
+        if use_formulas and sub_rows_for_section:
             refs = "+".join(f"C{r}" for r in sub_rows_for_section)
             ws.cell(row=section_row, column=VAL_COL).value = f"={refs}"
 
         ws.append([])
 
     _write_section("ATIVO", dados.get("ativo", {}), "ativo")
-    _write_section("PASSIVO", dados.get("passivo", {}), "passivo")
-
-    # Patrimônio Líquido
+    # ---- PASSIVO (inclui Patrimônio Líquido) ----
     pl = dados.get("patrimonio_liquido", {})
-    ws.append(["", "PATRIMÔNIO LÍQUIDO", 0])  # placeholder
-    pl_row = ws.max_row
-    section_total_rows["pl"] = pl_row
-    _style_section_row(pl_row)
+    passivo_data = dados.get("passivo", {})
+    if use_formulas:
+        passivo_header_val = 0
+    else:
+        passivo_header_val = (passivo_data.get("total", 0) or 0) + (pl.get("total", 0) or 0)
+    ws.append(["", "PASSIVO", passivo_header_val])
+    passivo_row = ws.max_row
+    section_total_rows["passivo"] = passivo_row
+    _style_section_row(passivo_row)
 
-    pl_conta_rows = []
-    for conta in pl.get("contas", []):
-        is_sub = conta.get("is_subtotal", False)
-        classif = conta.get("classificacao", "")
-        ws.append([classif, f"  {conta.get('descricao', '')}", conta.get("valor", 0)])
-        current_row = ws.max_row
-        pl_conta_rows.append(current_row)
+    passivo_sub_rows = []  # rows das subsecções para fórmula do total
+
+    for sub_key in ("circulante", "nao_circulante"):
+        sub = passivo_data.get(sub_key, {})
+        if not sub:
+            continue
+
+        sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
+        sub_total = sub.get("total", 0) or 0
+        ws.append(["", f"  {sub_title}", 0 if use_formulas else sub_total])
+        sub_header_row = ws.max_row
+        passivo_sub_rows.append(sub_header_row)
         for c in range(1, len(BALANCO_COLUMNS) + 1):
-            cell = ws.cell(row=current_row, column=c)
+            cell = ws.cell(row=sub_header_row, column=c)
+            cell.font = AGRUPADORA_FONT
+            cell.fill = AGRUPADORA_FILL
             cell.border = THIN_BORDER
-            if is_sub:
-                cell.font = AGRUPADORA_FONT
-                cell.fill = AGRUPADORA_FILL
-            if c == VAL_COL:
-                cell.number_format = BR_NUMBER_FORMAT
-                cell.alignment = RIGHT_ALIGN
+        ws.cell(row=sub_header_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
+        ws.cell(row=sub_header_row, column=VAL_COL).alignment = RIGHT_ALIGN
 
-    # Fórmula SUM para PL
-    if pl_conta_rows:
-        first_r, last_r = pl_conta_rows[0], pl_conta_rows[-1]
-        ws.cell(row=pl_row, column=VAL_COL).value = f"=SUM(C{first_r}:C{last_r})"
+        conta_rows = []
+        for conta in sub.get("contas", []):
+            nivel = conta.get("nivel", 3)
+            is_sub = conta.get("is_subtotal", False)
+            indent = "    " * max(1, nivel - 2)
+            classif = conta.get("classificacao", "")
+            ws.append([classif, f"{indent}{conta.get('descricao', '')}", conta.get("valor", 0)])
+            current_row = ws.max_row
+            conta_rows.append(current_row)
+            for c in range(1, len(BALANCO_COLUMNS) + 1):
+                cell = ws.cell(row=current_row, column=c)
+                cell.border = THIN_BORDER
+                if is_sub:
+                    cell.font = AGRUPADORA_FONT
+                    cell.fill = AGRUPADORA_FILL
+                if c == VAL_COL:
+                    cell.number_format = BR_NUMBER_FORMAT
+                    cell.alignment = RIGHT_ALIGN
+
+        if use_formulas and conta_rows:
+            first_r, last_r = conta_rows[0], conta_rows[-1]
+            ws.cell(row=sub_header_row, column=VAL_COL).value = f"=SUM(C{first_r}:C{last_r})"
+
+    # Patrimônio Líquido (subsecção do PASSIVO)
+    if pl.get("contas"):
+        pl_total = pl.get("total", 0) or 0
+        ws.append(["", "  Patrimônio Líquido", 0 if use_formulas else pl_total])
+        pl_sub_row = ws.max_row
+        passivo_sub_rows.append(pl_sub_row)
+        for c in range(1, len(BALANCO_COLUMNS) + 1):
+            cell = ws.cell(row=pl_sub_row, column=c)
+            cell.font = AGRUPADORA_FONT
+            cell.fill = AGRUPADORA_FILL
+            cell.border = THIN_BORDER
+        ws.cell(row=pl_sub_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
+        ws.cell(row=pl_sub_row, column=VAL_COL).alignment = RIGHT_ALIGN
+
+        pl_conta_rows = []
+        for conta in pl.get("contas", []):
+            is_sub = conta.get("is_subtotal", False)
+            classif = conta.get("classificacao", "")
+            ws.append([classif, f"    {conta.get('descricao', '')}", conta.get("valor", 0)])
+            current_row = ws.max_row
+            pl_conta_rows.append(current_row)
+            for c in range(1, len(BALANCO_COLUMNS) + 1):
+                cell = ws.cell(row=current_row, column=c)
+                cell.border = THIN_BORDER
+                if is_sub:
+                    cell.font = AGRUPADORA_FONT
+                    cell.fill = AGRUPADORA_FILL
+                if c == VAL_COL:
+                    cell.number_format = BR_NUMBER_FORMAT
+                    cell.alignment = RIGHT_ALIGN
+
+        if use_formulas and pl_conta_rows:
+            first_r, last_r = pl_conta_rows[0], pl_conta_rows[-1]
+            ws.cell(row=pl_sub_row, column=VAL_COL).value = f"=SUM(C{first_r}:C{last_r})"
+
+    # Fórmula PASSIVO total = PC + PNC + PL
+    if use_formulas and passivo_sub_rows:
+        refs = "+".join(f"C{r}" for r in passivo_sub_rows)
+        ws.cell(row=passivo_row, column=VAL_COL).value = f"={refs}"
 
     ws.append([])
 
-    # Validação com fórmulas
+    # Validação: Ativo = Passivo (Passivo já inclui PL)
     ativo_row = section_total_rows.get("ativo")
-    passivo_row = section_total_rows.get("passivo")
 
-    ws.append(["", "VALIDAÇÃO: Ativo = Passivo + PL"])
+    ws.append(["", "VALIDAÇÃO: Ativo = Passivo"])
     ws.cell(row=ws.max_row, column=2).font = Font(name="Calibri", bold=True, size=11)
 
-    if ativo_row and passivo_row:
+    if use_formulas and ativo_row and passivo_row:
         ws.append([
             "",
-            "Diferença (Ativo - Passivo - PL):",
+            "Diferença (Ativo - Passivo):",
             None,
         ])
         diff_row = ws.max_row
-        ws.cell(row=diff_row, column=VAL_COL).value = f"=C{ativo_row}-C{passivo_row}-C{pl_row}"
+        ws.cell(row=diff_row, column=VAL_COL).value = f"=C{ativo_row}-C{passivo_row}"
         ws.cell(row=diff_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
         ws.cell(row=diff_row, column=VAL_COL).alignment = RIGHT_ALIGN
 
@@ -587,13 +906,13 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
         status_cell.font = Font(name="Calibri", bold=True, size=11)
     else:
         total_ativo = dados.get("ativo", {}).get("total", 0) or 0
-        total_passivo = dados.get("passivo", {}).get("total", 0) or 0
+        total_passivo = passivo_data.get("total", 0) or 0
         total_pl = pl.get("total", 0) or 0
         passivo_pl = total_passivo + total_pl
         valido = abs(total_ativo - passivo_pl) < max(abs(total_ativo), 0.01) * 0.01
         ws.append([
             "",
-            f"Ativo Total: {total_ativo:,.2f}  |  Passivo + PL: {passivo_pl:,.2f}  |  "
+            f"Ativo Total: {total_ativo:,.2f}  |  Passivo: {passivo_pl:,.2f}  |  "
             f"{'OK' if valido else 'DIVERGENTE'}",
         ])
         status_cell = ws.cell(row=ws.max_row, column=2)
@@ -604,6 +923,286 @@ def _write_balanco(ws, dados: dict, titulo: str) -> None:
 
     for col_idx, width in BALANCO_COL_WIDTHS.items():
         ws.column_dimensions[get_column_letter(col_idx + 1)].width = width
+
+
+def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas: bool = True) -> None:
+    """Escreve Balanço comparativo com períodos lado a lado em uma única aba."""
+    periodos = []
+    all_dados = []
+    for demo in demos_list:
+        dados = demo.get("dados", {})
+        periodo = demo.get("periodo", dados.get("data_referencia", ""))
+        periodos.append(periodo)
+        all_dados.append(dados)
+
+    num_periods = len(periodos)
+    headers = [""] + periodos
+    num_cols = len(headers)
+
+    # Título
+    ws.append([titulo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=num_cols)
+    ws["A1"].font = Font(name="Calibri", bold=True, size=14)
+    ws.append([])
+
+    # Headers
+    ws.append(headers)
+    header_row = ws.max_row
+    for col_idx in range(num_cols):
+        cell = ws.cell(row=header_row, column=col_idx + 1)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = HEADER_ALIGN
+        cell.border = THIN_BORDER
+
+    section_title_font = Font(name="Calibri", bold=True, size=13, color="2F5496")
+
+    def _style_row(row_num, font=NORMAL_FONT, fill=None):
+        for c in range(1, num_cols + 1):
+            cell = ws.cell(row=row_num, column=c)
+            cell.font = font
+            cell.border = THIN_BORDER
+            if fill:
+                cell.fill = fill
+            if c > 1:
+                cell.number_format = BR_NUMBER_FORMAT
+                cell.alignment = RIGHT_ALIGN
+            else:
+                cell.alignment = LEFT_ALIGN
+
+    # Rastreia rows para fórmulas SUM
+    section_rows = {}  # "ativo" / "passivo" → row number
+
+    def _write_section(title: str, section_key: str):
+        # Header da seção (ATIVO) com placeholder ou valor estático
+        row_data = [title]
+        for dados in all_dados:
+            section = dados.get(section_key, {})
+            row_data.append(0 if use_formulas else (section.get("total", 0) or 0))
+        ws.append(row_data)
+        section_row = ws.max_row
+        section_rows[section_key] = section_row
+        _style_row(section_row, font=section_title_font)
+
+        sub_header_rows = []  # rows das subsecções para fórmula do total
+
+        for sub_key, sub_title in [("circulante", "CIRCULANTE"), ("nao_circulante", "NÃO CIRCULANTE")]:
+            any_contas = any(
+                d.get(section_key, {}).get(sub_key, {}).get("contas", [])
+                for d in all_dados
+            )
+            if not any_contas:
+                continue
+
+            # Header da subsecção com placeholder ou valor estático
+            row_data = [sub_title]
+            for dados in all_dados:
+                sub = dados.get(section_key, {}).get(sub_key, {})
+                row_data.append(0 if use_formulas else (sub.get("total", 0) or 0))
+            ws.append(row_data)
+            sub_header_row = ws.max_row
+            sub_header_rows.append(sub_header_row)
+            _style_row(sub_header_row, font=AGRUPADORA_FONT, fill=AGRUPADORA_FILL)
+
+            # Contas de detalhe
+            conta_rows = []
+            max_contas = max(
+                len(d.get(section_key, {}).get(sub_key, {}).get("contas", []))
+                for d in all_dados
+            )
+            for i in range(max_contas):
+                desc = ""
+                for dados in all_dados:
+                    contas = dados.get(section_key, {}).get(sub_key, {}).get("contas", [])
+                    if i < len(contas):
+                        desc = contas[i].get("descricao", "")
+                        break
+
+                row_data = [f"    {desc}"]
+                for dados in all_dados:
+                    contas = dados.get(section_key, {}).get(sub_key, {}).get("contas", [])
+                    if i < len(contas):
+                        row_data.append(contas[i].get("valor", 0) or 0)
+                    else:
+                        row_data.append(0)
+                ws.append(row_data)
+                conta_rows.append(ws.max_row)
+                _style_row(ws.max_row)
+
+            # Fórmula SUM no header da subsecção
+            if use_formulas and conta_rows:
+                first_r, last_r = conta_rows[0], conta_rows[-1]
+                for p in range(num_periods):
+                    col = p + 2
+                    col_letter = get_column_letter(col)
+                    ws.cell(row=sub_header_row, column=col).value = f"=SUM({col_letter}{first_r}:{col_letter}{last_r})"
+
+        # Fórmula SUM no header da seção (soma das subsecções)
+        if use_formulas and sub_header_rows:
+            for p in range(num_periods):
+                col = p + 2
+                col_letter = get_column_letter(col)
+                refs = "+".join(f"{col_letter}{r}" for r in sub_header_rows)
+                ws.cell(row=section_row, column=col).value = f"={refs}"
+
+        ws.append([])
+
+    _write_section("ATIVO", "ativo")
+
+    # ---- PASSIVO (inclui Patrimônio Líquido) ----
+    row_data = ["PASSIVO"]
+    for dados in all_dados:
+        if use_formulas:
+            row_data.append(0)
+        else:
+            p_total = dados.get("passivo", {}).get("total", 0) or 0
+            pl_total = dados.get("patrimonio_liquido", {}).get("total", 0) or 0
+            row_data.append(p_total + pl_total)
+    ws.append(row_data)
+    passivo_row = ws.max_row
+    section_rows["passivo"] = passivo_row
+    _style_row(passivo_row, font=section_title_font)
+
+    passivo_sub_rows = []  # rows das subsecções para fórmula do total
+
+    for sub_key, sub_title in [("circulante", "CIRCULANTE"), ("nao_circulante", "NÃO CIRCULANTE")]:
+        any_contas = any(
+            d.get("passivo", {}).get(sub_key, {}).get("contas", [])
+            for d in all_dados
+        )
+        if not any_contas:
+            continue
+
+        row_data = [sub_title]
+        for dados in all_dados:
+            sub = dados.get("passivo", {}).get(sub_key, {})
+            row_data.append(0 if use_formulas else (sub.get("total", 0) or 0))
+        ws.append(row_data)
+        sub_header_row = ws.max_row
+        passivo_sub_rows.append(sub_header_row)
+        _style_row(sub_header_row, font=AGRUPADORA_FONT, fill=AGRUPADORA_FILL)
+
+        conta_rows = []
+        max_contas = max(
+            len(d.get("passivo", {}).get(sub_key, {}).get("contas", []))
+            for d in all_dados
+        )
+        for i in range(max_contas):
+            desc = ""
+            for dados in all_dados:
+                contas = dados.get("passivo", {}).get(sub_key, {}).get("contas", [])
+                if i < len(contas):
+                    desc = contas[i].get("descricao", "")
+                    break
+
+            row_data = [f"    {desc}"]
+            for dados in all_dados:
+                contas = dados.get("passivo", {}).get(sub_key, {}).get("contas", [])
+                if i < len(contas):
+                    row_data.append(contas[i].get("valor", 0) or 0)
+                else:
+                    row_data.append(0)
+            ws.append(row_data)
+            conta_rows.append(ws.max_row)
+            _style_row(ws.max_row)
+
+        if use_formulas and conta_rows:
+            first_r, last_r = conta_rows[0], conta_rows[-1]
+            for p in range(num_periods):
+                col = p + 2
+                col_letter = get_column_letter(col)
+                ws.cell(row=sub_header_row, column=col).value = f"=SUM({col_letter}{first_r}:{col_letter}{last_r})"
+
+    # Patrimônio Líquido (subsecção do PASSIVO)
+    any_pl = any(d.get("patrimonio_liquido", {}).get("contas", []) for d in all_dados)
+    if any_pl:
+        row_data = ["PATRIMÔNIO LÍQUIDO"]
+        for dados in all_dados:
+            pl = dados.get("patrimonio_liquido", {})
+            row_data.append(0 if use_formulas else (pl.get("total", 0) or 0))
+        ws.append(row_data)
+        pl_sub_row = ws.max_row
+        passivo_sub_rows.append(pl_sub_row)
+        _style_row(pl_sub_row, font=AGRUPADORA_FONT, fill=AGRUPADORA_FILL)
+
+        pl_conta_rows = []
+        max_pl_contas = max(
+            len(d.get("patrimonio_liquido", {}).get("contas", []))
+            for d in all_dados
+        )
+        for i in range(max_pl_contas):
+            desc = ""
+            for dados in all_dados:
+                contas = dados.get("patrimonio_liquido", {}).get("contas", [])
+                if i < len(contas):
+                    desc = contas[i].get("descricao", "")
+                    break
+
+            row_data = [f"    {desc}"]
+            for dados in all_dados:
+                contas = dados.get("patrimonio_liquido", {}).get("contas", [])
+                if i < len(contas):
+                    row_data.append(contas[i].get("valor", 0) or 0)
+                else:
+                    row_data.append(0)
+            ws.append(row_data)
+            pl_conta_rows.append(ws.max_row)
+            _style_row(ws.max_row)
+
+        if use_formulas and pl_conta_rows:
+            first_r, last_r = pl_conta_rows[0], pl_conta_rows[-1]
+            for p in range(num_periods):
+                col = p + 2
+                col_letter = get_column_letter(col)
+                ws.cell(row=pl_sub_row, column=col).value = f"=SUM({col_letter}{first_r}:{col_letter}{last_r})"
+
+    # Fórmula PASSIVO total = PC + PNC + PL
+    if use_formulas and passivo_sub_rows:
+        for p in range(num_periods):
+            col = p + 2
+            col_letter = get_column_letter(col)
+            refs = "+".join(f"{col_letter}{r}" for r in passivo_sub_rows)
+            ws.cell(row=passivo_row, column=col).value = f"={refs}"
+
+    ws.append([])
+
+    # Validação: Ativo = Passivo
+    ativo_row = section_rows.get("ativo")
+    ws.append(["", "VALIDAÇÃO: Ativo = Passivo"])
+    ws.cell(row=ws.max_row, column=1).font = Font(name="Calibri", bold=True, size=11)
+
+    if use_formulas and ativo_row and passivo_row:
+        row_data = ["Diferença (Ativo - Passivo):"]
+        for p in range(num_periods):
+            row_data.append(None)
+        ws.append(row_data)
+        diff_row = ws.max_row
+        for p in range(num_periods):
+            col = p + 2
+            col_letter = get_column_letter(col)
+            ws.cell(row=diff_row, column=col).value = f"={col_letter}{ativo_row}-{col_letter}{passivo_row}"
+            ws.cell(row=diff_row, column=col).number_format = BR_NUMBER_FORMAT
+            ws.cell(row=diff_row, column=col).alignment = RIGHT_ALIGN
+
+        row_data = ["Status:"]
+        for p in range(num_periods):
+            row_data.append(None)
+        ws.append(row_data)
+        status_row = ws.max_row
+        for p in range(num_periods):
+            col = p + 2
+            col_letter = get_column_letter(col)
+            ws.cell(row=status_row, column=col).value = (
+                f'=IF(ABS({col_letter}{diff_row})<0.01,"OK","DIVERGENTE")'
+            )
+            ws.cell(row=status_row, column=col).font = Font(name="Calibri", bold=True, size=11)
+
+    # Larguras
+    ws.column_dimensions["A"].width = 50
+    for i in range(num_periods):
+        ws.column_dimensions[get_column_letter(i + 2)].width = 20
+
+    ws.freeze_panes = f"A{header_row + 1}"
 
 
 def _export_balanco_csv(dados: dict, output_path: Path) -> Path:

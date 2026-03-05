@@ -55,6 +55,12 @@ class Job:
     queue: list[int] = field(default_factory=list)
     queue_lock: threading.Lock = field(default_factory=threading.Lock)
     active_count: int = 0
+    # Preferências de fórmulas por tipo de demonstração
+    formula_opts: dict[str, bool] = field(default_factory=lambda: {
+        "dre": True,
+        "balanco": True,
+        "balancete": False,
+    })
     # Resultados por arquivo para consolidação multi-aba
     file_results: list[list[dict]] = field(default_factory=list)
 

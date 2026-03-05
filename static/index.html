@@ -48,25 +48,24 @@
                 </div>
             </div>
 
-            <!-- Cost Estimate Table -->
-            <div id="cost-estimate" class="cost-estimate hidden">
-                <table class="estimate-table">
-                    <thead>
-                        <tr>
-                            <th>Etapa</th>
-                            <th>Custo</th>
-                            <th>Tempo</th>
-                        </tr>
-                    </thead>
-                    <tbody id="estimate-body"></tbody>
-                    <tfoot>
-                        <tr class="estimate-total">
-                            <td><strong>Total</strong></td>
-                            <td id="estimate-cost-total"><strong>—</strong></td>
-                            <td id="estimate-time-total"><strong>—</strong></td>
-                        </tr>
-                    </tfoot>
-                </table>
+            <!-- Formula Options -->
+            <div class="formula-options">
+                <h3>Fórmulas</h3>
+                <div class="formula-grid">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="formulas-dre" checked>
+                        DRE
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="formulas-balanco" checked>
+                        Balanço
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="formulas-balancete">
+                        Balancete <span class="formula-hint">+ lento</span>
+                    </label>
+                </div>
+                <span class="skip-format-hint">Fórmulas verificam se os valores batem &mdash; ajuda a identificar erros de classificação</span>
             </div>
 
             <!-- Skip Formatting -->
@@ -107,6 +106,9 @@
             <div class="results-actions">
                 <button id="download-all-btn" class="btn-primary hidden" onclick="downloadAll()">
                     Baixar Todos (ZIP)
+                </button>
+                <button id="generate-csv-btn" class="btn-secondary hidden" onclick="generateCSV()">
+                    Gerar CSV
                 </button>
                 <button class="btn-secondary" onclick="resetApp()">
                     Nova Geração

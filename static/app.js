@@ -4,9 +4,6 @@ let jobId = null;
 let uploadedFiles = [];
 let eventSource = null;
 let modelDefaults = {};
-let estimatedCost = null;
-let estimatedTime = null;
-
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 const fileListSection = document.getElementById('file-list-section');
@@ -47,85 +44,6 @@ async function loadModels() {
 }
 
 loadModels();
-
-// ---------------------------------------------------------------------------
-// Cost Estimate (table format)
-// ---------------------------------------------------------------------------
-
-// Empirical time per page per stage (seconds)
-const TIME_PER_PAGE = {
-    classifier: 1,
-    extractor: 20,
-};
-const PARALLEL_WORKERS = 10;
-
-const STAGE_NAMES = {
-    classifier: 'Classificação',
-    extractor: 'Extração',
-};
-
-async function updateEstimate() {
-    if (!uploadedFiles.length) return;
-
-    const totalPages = uploadedFiles.reduce((sum, f) => sum + (f.pages || 0), 0);
-    if (totalPages === 0) return;
-
-    const models = {};
-    ['classifier', 'extractor'].forEach(stage => {
-        const select = document.getElementById(`model-${stage}`);
-        if (select) models[stage] = select.value;
-    });
-
-    try {
-        const resp = await fetch('/estimate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ total_pages: totalPages, ...models }),
-        });
-        if (!resp.ok) return;
-        const data = await resp.json();
-
-        // Build table rows
-        const tbody = document.getElementById('estimate-body');
-        tbody.innerHTML = '';
-
-        let totalCost = 0;
-        let totalTime = 0;
-
-        const parallelFactor = Math.min(uploadedFiles.length, PARALLEL_WORKERS);
-        const stages = ['classifier', 'extractor'];
-        stages.forEach(stage => {
-            const cost = data[stage] || 0;
-            const time = Math.round((TIME_PER_PAGE[stage] || 0) * totalPages / parallelFactor);
-            totalCost += cost;
-            totalTime += time;
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>${STAGE_NAMES[stage]}</td>
-                <td>${formatBRL(cost)}</td>
-                <td>${formatTime(time)}</td>
-            `;
-            tbody.appendChild(tr);
-        });
-
-        estimatedCost = totalCost;
-        estimatedTime = totalTime;
-
-        document.getElementById('estimate-cost-total').innerHTML = `<strong>${formatBRL(totalCost)}</strong>`;
-        document.getElementById('estimate-time-total').innerHTML = `<strong>${formatTime(totalTime)}</strong>`;
-
-        document.getElementById('cost-estimate').classList.remove('hidden');
-    } catch (err) {
-        console.error('Erro ao estimar custo:', err);
-    }
-}
-
-// Recalcula estimativa ao mudar modelo
-['classifier', 'extractor'].forEach(stage => {
-    const select = document.getElementById(`model-${stage}`);
-    if (select) select.addEventListener('change', updateEstimate);
-});
 
 // ---------------------------------------------------------------------------
 // Drop Zone
@@ -199,7 +117,6 @@ async function uploadFiles(files) {
         fileListSection.classList.remove('hidden');
         progressSection.classList.add('hidden');
         resultsSection.classList.add('hidden');
-        updateEstimate();
     } catch (err) {
         alert('Erro de conexão: ' + err.message);
     } finally {
@@ -235,11 +152,6 @@ async function removeFile(filename) {
             renderFileList({ files: uploadedFiles, total_pages: data.total_pages });
             if (uploadedFiles.length === 0) {
                 fileListSection.classList.add('hidden');
-                document.getElementById('cost-estimate').classList.add('hidden');
-                estimatedCost = null;
-                estimatedTime = null;
-            } else {
-                updateEstimate();
             }
         }
     } catch (err) {
@@ -282,11 +194,21 @@ async function startProcessing() {
 
     const skipFormat = skipFormatCheckbox && skipFormatCheckbox.checked;
 
+    const formulasDre = document.getElementById('formulas-dre')?.checked ?? true;
+    const formulasBalanco = document.getElementById('formulas-balanco')?.checked ?? true;
+    const formulasBalancete = document.getElementById('formulas-balancete')?.checked ?? false;
+
     try {
         const resp = await fetch(`/process/${jobId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...models, skip_format: skipFormat }),
+            body: JSON.stringify({
+                ...models,
+                skip_format: skipFormat,
+                formulas_dre: formulasDre,
+                formulas_balanco: formulasBalanco,
+                formulas_balancete: formulasBalancete,
+            }),
         });
         if (!resp.ok) {
             const err = await resp.json();
@@ -439,8 +361,6 @@ function _buildProgressItem(p, data) {
         rightHtml = `
             <span class="done-info">
                 <span>${p.time.toFixed(1)}s</span>
-                <span>·</span>
-                <span>${formatBRL(p.cost)}</span>
             </span>
         `;
     } else if (p.status === 'error') {
@@ -547,41 +467,14 @@ async function onProcessingDone() {
 function renderResults(data) {
     const summary = document.getElementById('results-summary');
 
-    const hasEstimate = estimatedCost !== null && estimatedTime !== null;
-
     let html = '<div class="result-stats">';
 
-    if (hasEstimate) {
-        html += `
-            <span class="result-stat">
-                <span class="label">Tempo orcado:</span>
-                <span class="value">${formatTime(estimatedTime)}</span>
-            </span>
-            <span class="result-stat">
-                <span class="label">Tempo real:</span>
-                <span class="value">${data.total_time.toFixed(1)}s</span>
-            </span>
-            <span class="result-stat">
-                <span class="label">Custo orcado:</span>
-                <span class="value">${formatBRL(estimatedCost)}</span>
-            </span>
-            <span class="result-stat">
-                <span class="label">Custo real:</span>
-                <span class="value">${formatBRL(data.total_cost)}</span>
-            </span>
-        `;
-    } else {
-        html += `
-            <span class="result-stat">
-                <span class="label">Tempo:</span>
-                <span class="value">${data.total_time.toFixed(1)}s</span>
-            </span>
-            <span class="result-stat">
-                <span class="label">Custo:</span>
-                <span class="value">${formatBRL(data.total_cost)}</span>
-            </span>
-        `;
-    }
+    html += `
+        <span class="result-stat">
+            <span class="label">Tempo:</span>
+            <span class="value">${data.total_time.toFixed(1)}s</span>
+        </span>
+    `;
 
     html += `
         <span class="result-stat">
@@ -602,6 +495,17 @@ function renderResults(data) {
     }
 
     document.getElementById('download-all-btn').classList.remove('hidden');
+
+    // Mostra botão "Gerar CSV" se ainda não há CSVs gerados
+    const hasCSV = data.files.some(f => f.type === 'csv');
+    const csvBtn = document.getElementById('generate-csv-btn');
+    if (csvBtn) {
+        if (hasCSV) {
+            csvBtn.classList.add('hidden');
+        } else {
+            csvBtn.classList.remove('hidden');
+        }
+    }
 
     data.files.forEach(f => {
         const div = document.createElement('div');
@@ -635,6 +539,27 @@ function downloadAll() {
     window.open(`/download-all/${jobId}`);
 }
 
+async function generateCSV() {
+    if (!jobId) return;
+    const btn = document.getElementById('generate-csv-btn');
+    btn.disabled = true;
+    btn.textContent = 'Gerando...';
+    try {
+        const resp = await fetch(`/generate-csv/${jobId}`, { method: 'POST' });
+        if (!resp.ok) throw new Error('Erro ao gerar CSV');
+        const result = await resp.json();
+        btn.classList.add('hidden');
+        // Recarrega lista de arquivos para mostrar os CSVs
+        const dataResp = await fetch(`/results/${jobId}`);
+        const data = await dataResp.json();
+        renderResults(data);
+    } catch (e) {
+        btn.textContent = 'Gerar CSV';
+        btn.disabled = false;
+        console.error('Erro ao gerar CSV:', e);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Reset
 // ---------------------------------------------------------------------------
@@ -642,8 +567,6 @@ function downloadAll() {
 function resetApp() {
     jobId = null;
     uploadedFiles = [];
-    estimatedCost = null;
-    estimatedTime = null;
     if (eventSource) { eventSource.close(); eventSource = null; }
 
     fileListSection.classList.add('hidden');
@@ -658,7 +581,6 @@ function resetApp() {
     document.getElementById('elapsed-timer').textContent = '0:00';
     document.getElementById('progress-details').innerHTML = '';
     document.getElementById('results-list').innerHTML = '';
-    document.getElementById('cost-estimate').classList.add('hidden');
 
     // Restaura selects de modelo ao default
     ['classifier', 'extractor'].forEach(stage => {
@@ -666,10 +588,16 @@ function resetApp() {
         if (select && modelDefaults[stage]) select.value = modelDefaults[stage];
     });
 
-    // Restaura checkbox
+    // Restaura checkboxes
     if (skipFormatCheckbox) {
         skipFormatCheckbox.checked = false;
     }
+    const fDre = document.getElementById('formulas-dre');
+    const fBal = document.getElementById('formulas-balanco');
+    const fBct = document.getElementById('formulas-balancete');
+    if (fDre) fDre.checked = true;
+    if (fBal) fBal.checked = true;
+    if (fBct) fBct.checked = false;
 
     convertBtn.disabled = false;
     convertBtn.textContent = 'Gerar Demonstrações';
@@ -678,13 +606,6 @@ function resetApp() {
 // ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
-
-const USD_BRL = 5.80;
-
-function formatBRL(usd) {
-    const brl = usd * USD_BRL;
-    return 'R$ ' + brl.toFixed(2).replace('.', ',');
-}
 
 function formatSize(bytes) {
     if (bytes < 1024) return bytes + ' B';

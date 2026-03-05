@@ -137,9 +137,14 @@ _HEADER_KEYWORDS_VALUE = ("VALOR", "VALUE")
 
 # Keywords que indicam colunas NÃO-numéricas (não são períodos)
 _NON_PERIOD_KEYWORDS = (
-    "AV%", "AV %", "A.V.%", "ANÁLISE VERTICAL", "ANALISE VERTICAL",
+    "AV%", "AV %", "AV(", "AV (", "A.V.", "A.V",
+    "ANÁLISE VERTICAL", "ANALISE VERTICAL",
     "%", "PERCENTUAL",
+    "VARIAÇÃO", "VARIACAO", "VAR.",
 )
+
+# Regex para detectar colunas que são apenas "AV" (análise vertical)
+_AV_ONLY_RE = re.compile(r"^AV\b", re.IGNORECASE)
 
 
 def _analyze_header(
@@ -218,8 +223,10 @@ def _detect_value_columns(
         if col_idx < len(header):
             name = header[col_idx].strip().replace("**", "")
             name_upper = name.upper()
-            # Ignora colunas explicitamente não-periódicas
+            # Ignora colunas explicitamente não-periódicas (AV, VARIAÇÃO, etc.)
             if any(kw in name_upper for kw in _NON_PERIOD_KEYWORDS):
+                continue
+            if _AV_ONLY_RE.match(name_upper):
                 continue
             if name_upper not in ("VALOR", "VALUE", ""):
                 period_name = name
@@ -285,8 +292,8 @@ def _formatar_dre_internal(
 
         valor_raw = row[val_col_idx] if val_col_idx < len(row) else ""
 
-        # Remove markdown bold
-        descricao = descricao_raw.replace("**", "").strip()
+        # Remove markdown bold e entidades HTML (&nbsp;) que o modelo às vezes retorna
+        descricao = descricao_raw.replace("**", "").replace("&nbsp;", " ").strip()
         if not descricao:
             continue
 
@@ -329,6 +336,24 @@ def _formatar_dre_internal(
         if classificacao:
             linha_dict["classificacao"] = classificacao
         linhas.append(linha_dict)
+
+    # Segunda passada: marca agrupadoras (nivel 1, não-subtotal, após primeiro subtotal, com filhos nivel 2)
+    seen_subtotal = False
+    for i, linha in enumerate(linhas):
+        if linha["is_subtotal"]:
+            seen_subtotal = True
+            continue
+        if linha["nivel"] == 1 and seen_subtotal and not linha["is_subtotal"]:
+            # Verifica se há filhos nivel 2 logo abaixo
+            has_children = False
+            for j in range(i + 1, len(linhas)):
+                if linhas[j]["nivel"] == 2:
+                    has_children = True
+                    break
+                if linhas[j]["nivel"] == 1 or linhas[j]["is_subtotal"]:
+                    break
+            if has_children:
+                linha["is_agrupadora"] = True
 
     return {
         "empresa": empresa,
@@ -445,7 +470,7 @@ def _formatar_balanco_internal(
 
         valor_col = row[val_col_idx] if val_col_idx < len(row) else ""
 
-        descricao = descricao_raw.replace("**", "").strip()
+        descricao = descricao_raw.replace("**", "").replace("&nbsp;", " ").strip()
         if not descricao:
             continue
 
@@ -453,7 +478,6 @@ def _formatar_balanco_internal(
         valor = 0.0
         if valor_col:
             valor, _ = _parse_br_number(valor_col)
-            valor = abs(valor)  # Balanço sempre positivo
 
         # Detecta subsecções ANTES de seções (para evitar que "Ativo Não Circulante"
         # seja capturado pelo check de "ATIVO")
@@ -629,18 +653,25 @@ def _is_total_line(desc_upper: str) -> bool:
 
 
 def _fill_missing_totals(result: dict) -> None:
-    """Preenche totais faltantes somando as contas."""
+    """Preenche/recalcula totais somando as sub-seções.
+
+    Sempre recalcula o total de ativo/passivo a partir das sub-seções,
+    porque muitos PDFs mostram PASSIVO total = Passivo + PL, o que
+    causaria dupla-contagem na validação (Ativo = Passivo + PL).
+    """
     for secao in ("ativo", "passivo"):
         data = result[secao]
         for sub in ("circulante", "nao_circulante"):
             sub_data = data.get(sub, {})
             if not sub_data.get("total") and sub_data.get("contas"):
                 sub_data["total"] = sum(c.get("valor", 0) for c in sub_data["contas"])
-        if not data.get("total"):
-            data["total"] = (
-                data.get("circulante", {}).get("total", 0) +
-                data.get("nao_circulante", {}).get("total", 0)
-            )
+        # Sempre recalcula total da seção a partir das sub-seções
+        sub_total = (
+            data.get("circulante", {}).get("total", 0) +
+            data.get("nao_circulante", {}).get("total", 0)
+        )
+        if sub_total > 0:
+            data["total"] = sub_total
 
     pl = result["patrimonio_liquido"]
     if not pl.get("total") and pl.get("contas"):
@@ -685,7 +716,7 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
         # Mapeia colunas: Código | Classificação | Descrição | Tipo | Saldo Ant | Déb | Créd | Saldo Atual
         codigo = row[0].strip()
         classificacao = row[1].strip()
-        descricao = row[2].strip().replace("**", "")
+        descricao = row[2].strip().replace("**", "").replace("&nbsp;", " ").strip()
         tipo_raw = row[3].strip().upper()
 
         # Pula linhas de header repetidas (quebra de página no PDF)

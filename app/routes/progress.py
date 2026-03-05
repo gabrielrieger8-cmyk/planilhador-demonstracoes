@@ -29,6 +29,9 @@ class ProcessRequest(BaseModel):
     extractor: Optional[str] = None
     formatter: Optional[str] = None
     skip_format: bool = False
+    formulas_dre: bool = True
+    formulas_balanco: bool = True
+    formulas_balancete: bool = False
 
 
 class ReorderRequest(BaseModel):
@@ -69,6 +72,11 @@ async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest())
 
     job.models = models
     job.skip_format = body.skip_format
+    job.formula_opts = {
+        "dre": body.formulas_dre,
+        "balanco": body.formulas_balanco,
+        "balancete": body.formulas_balancete,
+    }
     job.status = "processing"
     job.completed = 0
     job.started_at = time.time()

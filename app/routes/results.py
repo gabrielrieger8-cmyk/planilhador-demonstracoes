@@ -1,18 +1,21 @@
 """Rotas de resultados e downloads.
 
-GET /results/{job_id} — Lista arquivos gerados.
-GET /download/{job_id}/{filename} — Baixa arquivo individual.
-GET /download-all/{job_id} — Baixa todos como ZIP.
+GET  /results/{job_id}               — Lista arquivos gerados.
+GET  /download/{job_id}/{filename}   — Baixa arquivo individual.
+GET  /download-all/{job_id}          — Baixa todos como ZIP.
+POST /generate-csv/{job_id}          — Gera CSVs on-demand a partir dos dados já processados.
 """
 
 from __future__ import annotations
 
+import re
 import zipfile
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from app.jobs import jobs
+from app.services.exporter import export_csv
 
 router = APIRouter()
 
@@ -69,6 +72,37 @@ async def download(job_id: str, filename: str):
         media_type=media_type,
         filename=filename,
     )
+
+
+@router.post("/generate-csv/{job_id}")
+async def generate_csv(job_id: str):
+    """Gera CSVs on-demand a partir dos dados já processados."""
+    job = jobs.get(job_id)
+    if not job or not job.output_dir:
+        raise HTTPException(404, "Job não encontrado.")
+
+    if not job.file_results:
+        raise HTTPException(400, "Dados formatados não disponíveis.")
+
+    generated = []
+    for fr in job.file_results:
+        base_name = fr["filename"].rsplit(".", 1)[0] if "." in fr["filename"] else fr["filename"]
+        resultados = fr["resultados"]
+
+        tipo_counts: dict[str, int] = {}
+        for r in resultados:
+            t = r["tipo"]
+            tipo_counts[t] = tipo_counts.get(t, 0) + 1
+            if tipo_counts[t] > 1:
+                safe_period = re.sub(r'[/\\:*?"<>|]', '-', r.get("periodo", "")) or str(tipo_counts[t])
+                csv_name = f"{base_name}_{t}_{safe_period}.csv"
+            else:
+                csv_name = f"{base_name}_{t}.csv"
+            csv_path = job.output_dir / csv_name
+            export_csv(r["dados"], r["tipo"], csv_path)
+            generated.append(csv_name)
+
+    return {"generated": generated, "count": len(generated)}
 
 
 @router.get("/download-all/{job_id}")

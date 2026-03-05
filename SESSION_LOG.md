@@ -274,3 +274,60 @@ Fix: linhas de header repetidas em balancetes (quebra de pagina no PDF).
 - Reiniciar servico `balancetes.service` (requer sudo)
 - Reprocessar PDF da TONIOLO para validar fixes end-to-end
 - Testar com outros PDFs comparativos
+
+---
+
+## Sessao 6 — 2026-03-02
+
+### Objetivo
+Corrigir formato de saida de DRE e Balanco comparativos para reproduzir o layout do exemplo (TONIOLO ULTIMATE.xlsx). CSV gerado somente on-demand.
+
+### Diagnostico
+Comparando o exemplo `Exemplos/TONIOLO ULTIMATE.xlsx` com o output do sistema, foram identificados 5 problemas:
+1. Multi-periodo em abas separadas (deveria ser lado a lado em 1 aba)
+2. Coluna VARIACAO e AV auto-geradas desnecessariamente
+3. `abs(valor)` no Balanco removia negativos (ex: Prejuizos Acumulados)
+4. Filtro `_NON_PERIOD_KEYWORDS` nao cobria "AV (2024)", "AV (2025)", "VARIACAO"
+5. Validacao do Balanco falhava: PASSIVO total do PDF ja incluia PL → dupla contagem
+
+### O que foi feito
+
+**1. Formato comparativo lado a lado (exporter.py)**
+- Nova funcao `_write_dre_comparativo()`: escreve DRE com colunas `Descricao | Periodo1 | Periodo2 | ...`
+- Nova funcao `_write_balanco_comparativo()`: escreve Balanco com ATIVO + PASSIVO + PL em 1 aba, periodos lado a lado
+- `export_excel_multi()` refatorado: agrupa resultados por tipo, DRE/Balanco multi-periodo usam funcoes comparativas
+
+**2. Valores negativos preservados (formatter.py)**
+- Removido `abs(valor)` em `_formatar_balanco_internal()` — valores como Prejuizos Acumulados mantem sinal negativo
+
+**3. Filtro AV/VARIACAO corrigido (formatter.py)**
+- Adicionados keywords: "AV(", "AV (", "A.V.", "VARIACAO", "VARIAÇÃO", "VAR."
+- Adicionada regex `_AV_ONLY_RE` para filtrar colunas cujo nome comeca com "AV" (ex: "AV (2024)")
+
+**4. Validacao Balanco corrigida (formatter.py)**
+- `_fill_missing_totals()` agora SEMPRE recalcula total de ativo/passivo a partir das sub-secoes (circulante + nao_circulante)
+- Evita dupla contagem quando o PDF mostra PASSIVO total = Passivo + PL
+
+**5. CSV on-demand (pipeline.py + results.py + frontend)**
+- Pipeline nao gera mais CSVs automaticamente — apenas Excel
+- Novo endpoint `POST /generate-csv/{job_id}` gera CSVs a partir dos dados ja processados (job.file_results)
+- Frontend: botao "Gerar CSV" aparece nos resultados, gera CSVs e atualiza lista de arquivos
+
+**6. Testes (test_exporter.py)**
+- 7 novos testes em `TestComparativoExporter`: DRE/Balanco comparativo 1 aba, valores lado a lado, negativos preservados, mix tipos
+- Total: 63 testes passando (31 formatter + 20 exporter + 12 validator)
+
+### Arquivos modificados
+- `app/services/formatter.py` — abs() removido, _NON_PERIOD_KEYWORDS ampliado, _AV_ONLY_RE, _fill_missing_totals recalcula sempre
+- `app/services/exporter.py` — _write_dre_comparativo, _write_balanco_comparativo, export_excel_multi refatorado
+- `app/services/pipeline.py` — removida geracao automatica de CSV
+- `app/routes/results.py` — novo endpoint POST /generate-csv/{job_id}
+- `static/index.html` — botao "Gerar CSV"
+- `static/app.js` — generateCSV(), logica de visibilidade do botao CSV
+- `tests/test_exporter.py` — 7 novos testes comparativos
+
+### Decisoes tecnicas
+- Periodos lado a lado no Excel (nao em abas separadas) — reproduz formato do exemplo
+- AV e VARIACAO filtradas como nao-periodos no formatter (se presentes no PDF, sao ignoradas)
+- CSV gerado on-demand para output mais limpo — endpoint reutiliza dados ja processados em job.file_results
+- Total de ativo/passivo sempre recalculado das sub-secoes para evitar inconsistencia com PDFs que incluem PL no total de PASSIVO

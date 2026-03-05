@@ -20,9 +20,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import (
     DATABASE_URL, logger,
-    GEMINI_MODELS, ANTHROPIC_MODELS, ALL_MODELS,
+    GEMINI_MODELS, ALL_MODELS,
     CLASSIFIER_MODEL, EXTRACTOR_MODEL, FORMATTER_MODEL,
-    estimar_custo,
 )
 from app.models.database import init_db
 
@@ -145,7 +144,11 @@ def startup():
 async def index():
     html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     html = html.replace("?v=HASH", f"?v={_static_version}")
-    return Response(html, media_type="text/html")
+    return Response(
+        html,
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.get("/models")
@@ -153,7 +156,7 @@ async def get_models():
     """Retorna modelos disponíveis para cada etapa do pipeline."""
     all_options = [
         {"id": mid, "label": info["label"]}
-        for mid, info in ALL_MODELS.items()
+        for mid, info in GEMINI_MODELS.items()
     ]
     return {
         "classifier": all_options,
@@ -165,18 +168,6 @@ async def get_models():
             "formatter": FORMATTER_MODEL,
         },
     }
-
-
-@app.post("/estimate")
-async def estimate(body: dict):
-    """Estima custo de processamento baseado em páginas e modelos."""
-    total_pages = body.get("total_pages", 0)
-    models = {
-        "classifier": body.get("classifier", CLASSIFIER_MODEL),
-        "extractor": body.get("extractor", EXTRACTOR_MODEL),
-        "formatter": body.get("formatter", FORMATTER_MODEL),
-    }
-    return estimar_custo(total_pages, models)
 
 
 @app.post("/feedback")

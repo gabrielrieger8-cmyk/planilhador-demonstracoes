@@ -323,22 +323,8 @@ def _process_single_file(
             progress.output_files.append(csv_name)
     else:
         xlsx_path = output_dir / f"{base_name}.xlsx"
-        export_excel_multi(resultados, empresa, xlsx_path)
+        export_excel_multi(resultados, empresa, xlsx_path, formula_opts=job.formula_opts)
         progress.output_files.append(xlsx_path.name)
-
-        tipo_counts: dict[str, int] = {}
-        for r in resultados:
-            t = r["tipo"]
-            tipo_counts[t] = tipo_counts.get(t, 0) + 1
-            if tipo_counts[t] > 1:
-                # Multi-período: adiciona período ao nome para evitar colisão
-                safe_period = re.sub(r'[/\\:*?"<>|]', '-', r.get("periodo", "")) or str(tipo_counts[t])
-                csv_name = f"{base_name}_{t}_{safe_period}.csv"
-            else:
-                csv_name = f"{base_name}_{t}.csv"
-            csv_path = output_dir / csv_name
-            export_csv(r["dados"], r["tipo"], csv_path)
-            progress.output_files.append(csv_name)
 
     progress.cost = round(custo_total, 6)
 
@@ -394,7 +380,7 @@ def _consolidate_excel(job: Job) -> None:
         return
 
     consolidated_path = output_dir / "Consolidado.xlsx"
-    export_excel_multi(all_demos, empresa, consolidated_path)
+    export_excel_multi(all_demos, empresa, consolidated_path, formula_opts=job.formula_opts)
     logger.info(
         "Excel consolidado gerado: %s (%d abas)",
         consolidated_path, len(all_demos),
