@@ -29,7 +29,7 @@ class ProcessRequest(BaseModel):
     extractor: Optional[str] = None
     formatter: Optional[str] = None
     skip_format: bool = False
-    formulas_dre: bool = True
+    formulas_dre: bool = False
     formulas_balanco: bool = True
     formulas_balancete: bool = False
 
