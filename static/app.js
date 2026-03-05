@@ -194,7 +194,6 @@ async function startProcessing() {
 
     const skipFormat = skipFormatCheckbox && skipFormatCheckbox.checked;
 
-    const formulasDre = document.getElementById('formulas-dre')?.checked ?? true;
     const formulasBalanco = document.getElementById('formulas-balanco')?.checked ?? true;
     const formulasBalancete = document.getElementById('formulas-balancete')?.checked ?? false;
 
@@ -205,7 +204,6 @@ async function startProcessing() {
             body: JSON.stringify({
                 ...models,
                 skip_format: skipFormat,
-                formulas_dre: formulasDre,
                 formulas_balanco: formulasBalanco,
                 formulas_balancete: formulasBalancete,
             }),
@@ -592,10 +590,8 @@ function resetApp() {
     if (skipFormatCheckbox) {
         skipFormatCheckbox.checked = false;
     }
-    const fDre = document.getElementById('formulas-dre');
     const fBal = document.getElementById('formulas-balanco');
     const fBct = document.getElementById('formulas-balancete');
-    if (fDre) fDre.checked = true;
     if (fBal) fBal.checked = true;
     if (fBct) fBct.checked = false;
 
