@@ -413,11 +413,11 @@ class TestComparativoExporter:
             wb = load_workbook(str(path))
             ws = wb.active
             # Procura a primeira linha de dados (RECEITA BRUTA)
-            # Layout: Desc | Per1 | AV | Per2 | AV | Variação
+            # Layout: Desc | Per1 | Per2
             for row in ws.iter_rows(min_row=1, values_only=True):
                 if row[0] and "RECEITA BRUTA" in str(row[0]):
                     assert row[1] == 200000, f"P1 esperado 200000, obteve {row[1]}"
-                    assert row[3] == 250000, f"P2 esperado 250000, obteve {row[3]}"
+                    assert row[2] == 250000, f"P2 esperado 250000, obteve {row[2]}"
                     break
 
     def test_balanco_multi_periodo_uma_aba(self):

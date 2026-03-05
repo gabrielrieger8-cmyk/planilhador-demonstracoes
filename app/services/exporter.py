@@ -346,8 +346,8 @@ def _export_balancete_csv(dados: dict, output_path: Path) -> Path:
 # DRE
 # ---------------------------------------------------------------------------
 
-DRE_COLUMNS = ["Classificação", "Descrição", "Valor", "% da Receita"]
-DRE_COL_WIDTHS = {0: 14, 1: 50, 2: 20, 3: 14}
+DRE_COLUMNS = ["Classificação", "Descrição", "Valor"]
+DRE_COL_WIDTHS = {0: 14, 1: 50, 2: 20}
 
 
 def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
@@ -364,9 +364,6 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
         ws["A2"].font = Font(name="Calibri", size=11, color="666666")
     ws.append([])
 
-    # Identifica linha da receita bruta para fórmula AV%
-    receita_bruta_row = None
-
     ws.append(DRE_COLUMNS)
     header_row = ws.max_row  # Row onde os headers foram escritos
     for col_idx in range(len(DRE_COLUMNS)):
@@ -376,18 +373,7 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
         cell.alignment = HEADER_ALIGN
         cell.border = THIN_BORDER
 
-    # Coluna de valor e % agora em C e D (índices 3 e 4)
     VAL_COL = 3   # coluna C (Valor)
-    PCT_COL = 4   # coluna D (% da Receita)
-
-    # Primeira passada: encontra a receita bruta
-    for idx, linha in enumerate(linhas):
-        desc = (linha.get("descricao") or "").upper()
-        if "RECEITA" in desc and ("BRUTA" in desc or "OPERACIONAL BRUTA" in desc):
-            receita_bruta_row = header_row + 1 + idx
-            break
-    if receita_bruta_row is None and linhas:
-        receita_bruta_row = header_row + 1  # primeira linha de dados
 
     # Rastreia linhas para fórmulas hierárquicas
     current_grouper_row = None
@@ -413,15 +399,10 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
         indent = "  " * (nivel - 1)
         descricao = f"{indent}{linha.get('descricao', '')}"
 
-        ws.append([classificacao, descricao, valor, 0])  # placeholder para AV%
+        ws.append([classificacao, descricao, valor])
         current_row = ws.max_row
 
         if use_formulas:
-            # Fórmula AV% (Análise Vertical): =C{row}/C${receita_bruta_row}
-            pct_cell = ws.cell(row=current_row, column=PCT_COL)
-            if receita_bruta_row:
-                pct_cell.value = f"=IF(C${receita_bruta_row}=0,0,C{current_row}/C${receita_bruta_row})"
-
             if is_subtotal:
                 _close_grouper()
                 # Subtotal = prev_subtotal + top-level rows entre eles
@@ -468,9 +449,6 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
             elif col_idx == 2:  # Valor
                 cell.number_format = BR_NUMBER_FORMAT
                 cell.alignment = RIGHT_ALIGN
-            elif col_idx == 3:  # % da Receita
-                cell.number_format = '0.0%'
-                cell.alignment = RIGHT_ALIGN
 
     _close_grouper()  # finaliza última agrupadora pendente
 
@@ -492,25 +470,15 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
 
     num_periods = len(periodos)
 
-    # Layout de colunas: Descrição | Per1 | AV | Per2 | AV | ... | Variação
-    # Coluna de valor do período p: 2 + p*2 (B, D, F, ...)
-    # Coluna AV% do período p: 3 + p*2 (C, E, G, ...)
-    # Coluna Variação: 2 + num_periods*2 (última coluna)
+    # Layout de colunas: Descrição | Per1 | Per2 | ...
+    # Coluna de valor do período p: 2 + p (B, C, D, ...)
     def val_col(p: int) -> int:
-        return 2 + p * 2
+        return 2 + p
 
-    def av_col(p: int) -> int:
-        return 3 + p * 2
-
-    var_col_idx = 2 + num_periods * 2
-    num_cols = var_col_idx  # total de colunas (incluindo variação)
+    num_cols = 1 + num_periods
 
     # Headers
-    headers = [""]
-    for p_name in periodos:
-        headers.append(p_name)
-        headers.append("AV")
-    headers.append("VARIAÇÃO")
+    headers = [""] + list(periodos)
 
     # Título
     ws.append([titulo])
@@ -530,17 +498,6 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
 
     # Usa primeiro período como template para descrições
     template = all_linhas[0] if all_linhas else []
-
-    # Primeira passada: encontra a receita bruta para AV%
-    receita_bruta_offset = None
-    for idx, linha in enumerate(template):
-        desc = (linha.get("descricao") or "").upper()
-        if "RECEITA" in desc and ("BRUTA" in desc or "OPERACIONAL BRUTA" in desc):
-            receita_bruta_offset = idx
-            break
-    if receita_bruta_offset is None and template:
-        receita_bruta_offset = 0
-    receita_bruta_row = header_row + 1 + receita_bruta_offset if receita_bruta_offset is not None else None
 
     # Rastreia rows para fórmulas hierárquicas
     current_grouper_row = None
@@ -566,41 +523,17 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
         indent = "  " * (nivel - 1)
         descricao = f"{indent}{linha.get('descricao', '')}"
 
-        # Monta row: [desc, val1, av1, val2, av2, ..., variação]
+        # Monta row: [desc, val1, val2, ...]
         row_data = [descricao]
         for p in range(num_periods):
             linhas_p = all_linhas[p]
             val = linhas_p[row_idx].get("valor", 0) or 0 if row_idx < len(linhas_p) else 0
-            row_data.append(val)   # valor
-            row_data.append(0)     # placeholder AV%
-        row_data.append(0)         # placeholder Variação
+            row_data.append(val)
 
         ws.append(row_data)
         current_row = ws.max_row
 
         if use_formulas:
-            # Fórmulas AV% para cada período
-            for p in range(num_periods):
-                vc = val_col(p)
-                ac = av_col(p)
-                vl = get_column_letter(vc)
-                if receita_bruta_row:
-                    rb_letter = get_column_letter(val_col(p))
-                    ws.cell(row=current_row, column=ac).value = (
-                        f"=IF({rb_letter}${receita_bruta_row}=0,0,"
-                        f"{vl}{current_row}/{rb_letter}${receita_bruta_row})"
-                    )
-
-            # Fórmula Variação: (último_período - primeiro_período) / ABS(primeiro_período)
-            if num_periods >= 2:
-                first_vl = get_column_letter(val_col(0))
-                last_vl = get_column_letter(val_col(num_periods - 1))
-                ws.cell(row=current_row, column=var_col_idx).value = (
-                    f"=IF(ABS({first_vl}{current_row})=0,0,"
-                    f"({last_vl}{current_row}-{first_vl}{current_row})"
-                    f"/ABS({first_vl}{current_row}))"
-                )
-
             if is_subtotal:
                 _close_current_grouper()
                 # Subtotal = prev_subtotal + top-level rows entre eles
@@ -646,14 +579,7 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
                 cell.alignment = LEFT_ALIGN
             else:
                 cell.alignment = RIGHT_ALIGN
-                # Colunas de valor: formato número
-                col_num = col_idx + 1
-                is_av = any(col_num == av_col(p) for p in range(num_periods))
-                is_var = col_num == var_col_idx
-                if is_av or is_var:
-                    cell.number_format = '0.0%'
-                else:
-                    cell.number_format = BR_NUMBER_FORMAT
+                cell.number_format = BR_NUMBER_FORMAT
 
     _close_current_grouper()  # finaliza última agrupadora pendente
 
@@ -661,8 +587,6 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
     ws.column_dimensions["A"].width = 50
     for p in range(num_periods):
         ws.column_dimensions[get_column_letter(val_col(p))].width = 20
-        ws.column_dimensions[get_column_letter(av_col(p))].width = 10
-    ws.column_dimensions[get_column_letter(var_col_idx)].width = 12
 
     ws.freeze_panes = f"A{header_row + 1}"
 
