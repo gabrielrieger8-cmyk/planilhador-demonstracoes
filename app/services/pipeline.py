@@ -323,8 +323,12 @@ def _process_single_file(
             progress.output_files.append(csv_name)
     else:
         xlsx_path = output_dir / f"{base_name}.xlsx"
-        export_excel_multi(resultados, empresa, xlsx_path, formula_opts=job.formula_opts)
-        progress.output_files.append(xlsx_path.name)
+        actual_path = export_excel_multi(
+            resultados, empresa, xlsx_path,
+            formula_opts=job.formula_opts,
+            include_vba=job.include_vba,
+        )
+        progress.output_files.append(actual_path.name)
 
     progress.cost = round(custo_total, 6)
 
@@ -380,7 +384,11 @@ def _consolidate_excel(job: Job) -> None:
         return
 
     consolidated_path = output_dir / "Consolidado.xlsx"
-    export_excel_multi(all_demos, empresa, consolidated_path, formula_opts=job.formula_opts)
+    export_excel_multi(
+        all_demos, empresa, consolidated_path,
+        formula_opts=job.formula_opts,
+        include_vba=job.include_vba,
+    )
     logger.info(
         "Excel consolidado gerado: %s (%d abas)",
         consolidated_path, len(all_demos),

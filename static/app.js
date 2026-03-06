@@ -196,6 +196,7 @@ async function startProcessing() {
 
     const formulasBalanco = document.getElementById('formulas-balanco')?.checked ?? true;
     const formulasBalancete = document.getElementById('formulas-balancete')?.checked ?? false;
+    const includeVba = document.getElementById('include-vba')?.checked ?? false;
 
     try {
         const resp = await fetch(`/process/${jobId}`, {
@@ -206,6 +207,7 @@ async function startProcessing() {
                 skip_format: skipFormat,
                 formulas_balanco: formulasBalanco,
                 formulas_balancete: formulasBalancete,
+                include_vba: includeVba,
             }),
         });
         if (!resp.ok) {

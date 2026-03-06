@@ -5,13 +5,16 @@ POST /upload — Recebe PDFs e retorna job_id com info dos arquivos.
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
+import threading
 import uuid
 from datetime import date
 from pathlib import Path
 
 import fitz
+import requests as http_requests
 from fastapi import APIRouter, HTTPException, UploadFile
 
 from app.config import logger
@@ -19,6 +22,32 @@ from app.jobs import FileInfo, Job, JobProgress, jobs
 from app.main import _post_to_portal, APP_NAME
 
 STORAGE_BASE = Path("/home/gabriel/mirar-data/files")
+
+
+def _persist_file_background(job_id: str, safe_filename: str, src_path: Path, content_len: int, file_info: FileInfo):
+    """Copia para storage permanente e registra no Portal em background."""
+    try:
+        perm_dir = STORAGE_BASE / APP_NAME / date.today().isoformat()
+        perm_dir.mkdir(parents=True, exist_ok=True)
+        perm_path = perm_dir / f"{job_id}_{safe_filename}"
+        shutil.copy2(str(src_path), str(perm_path))
+
+        resp = http_requests.post(
+            f"{os.getenv('PORTAL_API_URL', 'http://127.0.0.1:5001')}/api/files",
+            json={
+                "app": APP_NAME,
+                "original_filename": safe_filename,
+                "stored_path": str(perm_path),
+                "file_size_bytes": content_len,
+                "mime_type": "application/pdf",
+            },
+            headers={"X-Internal-Key": os.getenv("INTERNAL_API_KEY", "")},
+            timeout=5,
+        )
+        if resp.ok:
+            file_info.db_file_id = resp.json().get("file_id")
+    except Exception as exc:
+        logger.debug("Persist background falhou para %s: %s", safe_filename, exc)
 
 router = APIRouter()
 
@@ -73,41 +102,20 @@ async def upload(files: list[UploadFile], existing_job_id: str | None = None):
             logger.warning("Erro ao abrir PDF %s: %s", safe_filename, exc)
             pages = 0
 
-        # Save to permanent storage
-        perm_dir = STORAGE_BASE / APP_NAME / date.today().isoformat()
-        perm_dir.mkdir(parents=True, exist_ok=True)
-        perm_path = perm_dir / f"{job_id}_{safe_filename}"
-        shutil.copy2(str(dest), str(perm_path))
-
-        # Register file in Portal DB (synchronous to get file_id back)
-        import requests as http_requests
-        import os
-        db_file_id = None
-        try:
-            resp = http_requests.post(
-                f"{os.getenv('PORTAL_API_URL', 'http://127.0.0.1:5001')}/api/files",
-                json={
-                    "app": APP_NAME,
-                    "original_filename": safe_filename,
-                    "stored_path": str(perm_path),
-                    "file_size_bytes": len(content),
-                    "mime_type": "application/pdf",
-                },
-                headers={"X-Internal-Key": os.getenv("INTERNAL_API_KEY", "")},
-                timeout=5,
-            )
-            if resp.ok:
-                db_file_id = resp.json().get("file_id")
-        except Exception:
-            pass
-
-        file_infos.append(FileInfo(
+        fi = FileInfo(
             name=safe_filename,
             path=dest,
             pages=pages,
             size=len(content),
-            db_file_id=db_file_id,
-        ))
+        )
+        file_infos.append(fi)
+
+        # Cópia permanente + registro Portal em background (não bloqueia upload)
+        threading.Thread(
+            target=_persist_file_background,
+            args=(job_id, safe_filename, dest, len(content), fi),
+            daemon=True,
+        ).start()
 
     if not file_infos:
         raise HTTPException(400, "Nenhum PDF válido enviado.")

@@ -7,9 +7,11 @@ import logging
 import re
 from pathlib import Path
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+
+VBA_TEMPLATE = Path(__file__).parent.parent / "vba" / "template.xlsm"
 
 logger = logging.getLogger("planilhador")
 
@@ -82,11 +84,32 @@ def _unique_tab_name(name: str, used: set[str]) -> str:
     return base
 
 
+_MESES_ABREV = [
+    "", "jan", "fev", "mar", "abr", "mai", "jun",
+    "jul", "ago", "set", "out", "nov", "dez",
+]
+
+
+def _periodo_to_short(periodo: str) -> str:
+    """Converte período como '01.12.2025 A 31.12.2025' em 'dez/25'."""
+    if not periodo:
+        return ""
+    # Tenta extrair mês/ano do último date-like token (dd.mm.yyyy ou mm.yyyy ou mm/yyyy)
+    matches = re.findall(r'(\d{1,2})[./](\d{4})', periodo)
+    if matches:
+        mes_str, ano = matches[-1]
+        mes = int(mes_str)
+        if 1 <= mes <= 12:
+            return f"{_MESES_ABREV[mes]}/{ano[2:]}"
+    return periodo
+
+
 def _short_tab_name(tipo: str, periodo: str) -> str:
-    """Nome curto para aba: 'Balancete - 01.2025'."""
+    """Nome curto para aba: 'Balancete dez/25'."""
     label = TIPO_LABELS.get(tipo, tipo)
-    if periodo:
-        return f"{label} - {periodo}"
+    short = _periodo_to_short(periodo)
+    if short:
+        return f"{label} {short}"
     return label
 
 
@@ -95,6 +118,8 @@ def export_excel_multi(
     empresa: str,
     output_path: Path,
     formula_opts: dict[str, bool] | None = None,
+    append_to: Path | None = None,
+    include_vba: bool = False,
 ) -> Path:
     """Gera Excel com abas agrupadas por tipo de demonstração.
 
@@ -106,15 +131,29 @@ def export_excel_multi(
         empresa: Nome da empresa.
         output_path: Caminho para salvar o arquivo.
         formula_opts: Dict com chaves 'dre', 'balanco', 'balancete' (bool).
+        append_to: Se fornecido, abre este workbook existente e adiciona abas.
+        include_vba: Se True, embute macros VBA do consolidador (salva como .xlsm).
 
     Returns:
         Path do arquivo gerado.
     """
     if formula_opts is None:
         formula_opts = {"dre": False, "balanco": True, "balancete": False}
-    wb = Workbook()
-    default_ws = wb.active
-    used_names: set[str] = set()
+
+    # Decide se abre workbook existente ou cria novo
+    if append_to and append_to.exists():
+        wb = load_workbook(str(append_to), keep_vba=True)
+        default_ws = None
+        used_names: set[str] = {ws.title for ws in wb.worksheets}
+    elif include_vba and VBA_TEMPLATE.exists():
+        wb = load_workbook(str(VBA_TEMPLATE), keep_vba=True)
+        # Remove a sheet padrão do template
+        default_ws = wb.active
+        used_names: set[str] = set()
+    else:
+        wb = Workbook()
+        default_ws = wb.active
+        used_names: set[str] = set()
 
     # Agrupa demonstrações por tipo, preservando ordem de aparição
     groups: list[tuple[str, list[dict]]] = []
@@ -126,18 +165,23 @@ def export_excel_multi(
             groups.append((tipo, []))
         groups[seen_tipos[tipo]][1].append(demo)
 
+    def _get_ws(tab_name: str) -> object:
+        """Cria nova sheet ou reutiliza default_ws na primeira aba."""
+        nonlocal default_ws
+        if default_ws is not None:
+            default_ws.title = tab_name
+            ws = default_ws
+            default_ws = None  # Consumed
+            return ws
+        return wb.create_sheet(title=tab_name)
+
     tab_idx = 0
     for tipo, demos in groups:
         # DRE/Balanço multi-período: comparativo lado a lado
         if len(demos) > 1 and tipo in ("dre", "balanco_patrimonial"):
             label = TIPO_LABELS.get(tipo, tipo)
             tab_name = _unique_tab_name(label, used_names)
-
-            if tab_idx == 0:
-                default_ws.title = tab_name
-                ws = default_ws
-            else:
-                ws = wb.create_sheet(title=tab_name)
+            ws = _get_ws(tab_name)
 
             titulo = f"{empresa} - {label}" if empresa else label
 
@@ -158,12 +202,7 @@ def export_excel_multi(
                 else:
                     raw_name = _build_title(empresa, tipo, periodo)
                 tab_name = _unique_tab_name(raw_name, used_names)
-
-                if tab_idx == 0:
-                    default_ws.title = tab_name
-                    ws = default_ws
-                else:
-                    ws = wb.create_sheet(title=tab_name)
+                ws = _get_ws(tab_name)
 
                 titulo = _build_title(empresa, tipo, periodo)
 
@@ -175,6 +214,14 @@ def export_excel_multi(
                     _write_balanco(ws, dados, titulo, use_formulas=formula_opts.get("balanco", True))
 
                 tab_idx += 1
+
+    # Remove sheet padrão vazia do template VBA (se não foi usada)
+    if default_ws is not None and len(wb.worksheets) > 1:
+        wb.remove(default_ws)
+
+    # Ajusta extensão para .xlsm se tem VBA
+    if wb.vba_archive and output_path.suffix.lower() == ".xlsx":
+        output_path = output_path.with_suffix(".xlsm")
 
     wb.save(str(output_path))
     logger.info("Excel gerado: %s (%d aba(s))", output_path, tab_idx)

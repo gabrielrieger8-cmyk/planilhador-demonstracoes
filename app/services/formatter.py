@@ -282,7 +282,7 @@ def _formatar_dre_internal(
         if has_classif:
             if len(row) < 3:
                 continue
-            classificacao = row[0].strip().replace("**", "")
+            classificacao = row[0].strip().replace("**", "").replace(",", ".")
             descricao_raw = row[1].strip()
         else:
             if len(row) < 2:
@@ -462,7 +462,7 @@ def _formatar_balanco_internal(
         if has_classif:
             if len(row) < 2:
                 continue
-            classificacao_raw = row[0].strip().replace("**", "")
+            classificacao_raw = row[0].strip().replace("**", "").replace(",", ".")
             descricao_raw = row[1].strip()
         else:
             classificacao_raw = ""
@@ -682,6 +682,58 @@ def _fill_missing_totals(result: dict) -> None:
 # Formatar Balancete
 # ---------------------------------------------------------------------------
 
+def _detect_balancete_columns(header_row: list[str]) -> dict[str, int]:
+    """Detecta mapeamento de colunas pelo header da tabela Markdown.
+
+    Retorna dict com chaves: codigo, classificacao, descricao, tipo,
+    saldo_anterior, debitos, creditos, saldo_atual → índice da coluna.
+    """
+    col_map: dict[str, int] = {}
+    for i, cell in enumerate(header_row):
+        upper = cell.strip().upper()
+        if upper in ("CÓDIGO", "CODIGO", "CONTA", "CÓD", "COD") and "classificacao" not in col_map:
+            # "Código" ou "Conta" numérica — só se ainda não mapeamos classificação
+            # (evita confundir "Código da Conta" = classificação)
+            col_map["codigo"] = i
+        elif upper in ("CLASSIFICAÇÃO", "CLASSIFICACAO", "CLASSIF", "CÓDIGO CONTÁBIL",
+                        "CODIGO CONTABIL") or "HIERARQ" in upper:
+            col_map["classificacao"] = i
+        elif upper in ("DESCRIÇÃO", "DESCRICAO", "NOME", "NOME DA CONTA",
+                        "DESCRIÇÃO DA CONTA", "DESCRICAO DA CONTA"):
+            col_map["descricao"] = i
+        elif upper in ("TIPO", "TP", "T/S", "CATEGORY"):
+            col_map["tipo"] = i
+        elif "SALDO" in upper and "ANT" in upper:
+            col_map["saldo_anterior"] = i
+        elif upper in ("DÉBITO", "DEBITO", "DÉBITOS", "DEBITOS") or upper == "DÉB":
+            col_map["debitos"] = i
+        elif upper in ("CRÉDITO", "CREDITO", "CRÉDITOS", "CREDITOS") or upper == "CRÉD":
+            col_map["creditos"] = i
+        elif "SALDO" in upper and ("ATUAL" in upper or "FINAL" in upper):
+            col_map["saldo_atual"] = i
+        elif "SALDO" in upper and "saldo_anterior" not in col_map:
+            col_map["saldo_anterior"] = i
+        elif "SALDO" in upper and "saldo_atual" not in col_map:
+            col_map["saldo_atual"] = i
+
+    return col_map
+
+
+def _fallback_balancete_columns(num_cols: int) -> dict[str, int]:
+    """Mapeamento padrão quando não há header detectável."""
+    if num_cols >= 8:
+        # Formato completo: Código | Classificação | Descrição | Tipo | SA | Déb | Créd | S.Atual
+        return {"codigo": 0, "classificacao": 1, "descricao": 2, "tipo": 3,
+                "saldo_anterior": 4, "debitos": 5, "creditos": 6, "saldo_atual": 7}
+    elif num_cols == 7:
+        # Sem Código: Classificação | Descrição | Tipo | SA | Déb | Créd | S.Atual
+        return {"classificacao": 0, "descricao": 1, "tipo": 2,
+                "saldo_anterior": 3, "debitos": 4, "creditos": 5, "saldo_atual": 6}
+    else:
+        return {"classificacao": 0, "descricao": 1, "tipo": 2,
+                "saldo_anterior": 3, "debitos": 4, "creditos": 5, "saldo_atual": 6}
+
+
 def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict:
     """Converte tabela Markdown de Balancete em JSON estruturado."""
     rows = _parse_pipe_table(texto)
@@ -689,42 +741,56 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
         return {"empresa": empresa, "periodo": periodo, "moeda": "BRL",
                 "contas": [], "totais": {}}
 
-    # Pula header (primeira linha com nomes de coluna)
-    start = 0
-    if rows and len(rows[0]) >= 4:
-        first_upper = " ".join(rows[0]).upper()
-        if any(kw in first_upper for kw in ("CÓDIGO", "CODIGO", "CLASSIFICAÇÃO",
-                                              "CLASSIFICACAO", "DESCRIÇÃO", "DESCRICAO",
-                                              "SALDO", "DÉBITO", "DEBITO")):
-            start = 1
-
-    # Keywords que identificam linhas de header repetidas (quebra de página)
+    # Detecta colunas pelo header
     _HEADER_KW = {
         "CÓDIGO", "CODIGO", "CLASSIFICAÇÃO", "CLASSIFICACAO",
         "DESCRIÇÃO", "DESCRICAO", "SALDO", "DÉBITO", "DEBITO",
         "CRÉDITO", "CREDITO", "TIPO", "CONTA", "NOME",
     }
 
+    start = 0
+    col_map: dict[str, int] = {}
+    if rows and len(rows[0]) >= 4:
+        first_upper = " ".join(rows[0]).upper()
+        if any(kw in first_upper for kw in _HEADER_KW):
+            col_map = _detect_balancete_columns(rows[0])
+            start = 1
+
+    if not col_map:
+        col_map = _fallback_balancete_columns(len(rows[0]) if rows else 8)
+
+    # Atalhos para índices
+    i_codigo = col_map.get("codigo")
+    i_classif = col_map.get("classificacao", 0)
+    i_desc = col_map.get("descricao", 1)
+    i_tipo = col_map.get("tipo", 2)
+    i_sa = col_map.get("saldo_anterior")
+    i_deb = col_map.get("debitos")
+    i_cred = col_map.get("creditos")
+    i_sat = col_map.get("saldo_atual")
+
+    # Mínimo de colunas para considerar válida (classificação + descrição + tipo + 1 valor)
+    min_cols = max(i_classif, i_desc, i_tipo) + 1
+
     contas = []
     total_debitos = 0.0
     total_creditos = 0.0
 
     for row in rows[start:]:
-        if len(row) < 7:
+        if len(row) < min_cols:
             continue
 
-        # Mapeia colunas: Código | Classificação | Descrição | Tipo | Saldo Ant | Déb | Créd | Saldo Atual
-        codigo = row[0].strip()
-        classificacao = row[1].strip()
-        descricao = row[2].strip().replace("**", "").replace("&nbsp;", " ").strip()
-        tipo_raw = row[3].strip().upper()
+        codigo = row[i_codigo].strip() if i_codigo is not None and i_codigo < len(row) else ""
+        classificacao = row[i_classif].strip().replace(",", ".") if i_classif < len(row) else ""
+        descricao = row[i_desc].strip().replace("**", "").replace("&nbsp;", " ").strip() if i_desc < len(row) else ""
+        tipo_raw = row[i_tipo].strip().upper() if i_tipo < len(row) else ""
 
         # Pula linhas de header repetidas (quebra de página no PDF)
         row_upper_set = {c.strip().upper() for c in row if c.strip()}
         if row_upper_set & _HEADER_KW and not any(c.strip()[:1].isdigit() for c in row[:2] if c.strip()):
             continue
 
-        if not codigo and not descricao:
+        if not classificacao and not descricao:
             continue
 
         # Nível pela classificação (conta pontos)
@@ -735,25 +801,24 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
 
         # Natureza pelo grupo contábil (primeiro segmento da classificação)
         primeiro_segmento = classificacao.split(".")[0].strip()
-        # Remove zeros à esquerda: "01" → "1", "02" → "2"
         grupo = primeiro_segmento.lstrip("0") or "0"
 
-        natureza = "D"  # default
+        natureza = "D"
         if grupo in ("2", "4"):
             natureza = "C"
         elif grupo in ("1", "3"):
             natureza = "D"
 
-        # Parse valores
-        saldo_ant_raw, dc_sa = _parse_br_number(row[4]) if len(row) > 4 else (0.0, None)
-        debitos_raw, dc_deb = _parse_br_number(row[5]) if len(row) > 5 else (0.0, None)
-        creditos_raw, dc_cred = _parse_br_number(row[6]) if len(row) > 6 else (0.0, None)
-        saldo_at_raw, dc_sat = _parse_br_number(row[7]) if len(row) > 7 else (0.0, None)
+        # Parse valores usando índices detectados
+        saldo_ant_raw, dc_sa = _parse_br_number(row[i_sa]) if i_sa is not None and i_sa < len(row) else (0.0, None)
+        debitos_raw, dc_deb = _parse_br_number(row[i_deb]) if i_deb is not None and i_deb < len(row) else (0.0, None)
+        creditos_raw, dc_cred = _parse_br_number(row[i_cred]) if i_cred is not None and i_cred < len(row) else (0.0, None)
+        saldo_at_raw, dc_sat = _parse_br_number(row[i_sat]) if i_sat is not None and i_sat < len(row) else (0.0, None)
 
         # Aplica sinais D/C
         saldo_anterior = _apply_dc_sign(saldo_ant_raw, dc_sa, natureza) if dc_sa else saldo_ant_raw
-        debitos = abs(debitos_raw)  # Débitos são sempre positivos
-        creditos = abs(creditos_raw)  # Créditos são sempre positivos
+        debitos = abs(debitos_raw)
+        creditos = abs(creditos_raw)
         saldo_atual = _apply_dc_sign(saldo_at_raw, dc_sat, natureza) if dc_sat else saldo_at_raw
 
         contas.append({
@@ -769,7 +834,6 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
             "saldo_atual": round(saldo_atual, 2),
         })
 
-        # Soma totais (apenas contas de detalhe)
         if not is_totalizador:
             total_debitos += debitos
             total_creditos += creditos
