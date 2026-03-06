@@ -11,7 +11,7 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-VBA_TEMPLATE = Path(__file__).parent.parent / "vba" / "template.xlsm"
+from app.vba.build_template import ensure_vba_template, TEMPLATE_PATH as VBA_TEMPLATE
 
 logger = logging.getLogger("planilhador")
 
@@ -145,8 +145,8 @@ def export_excel_multi(
         wb = load_workbook(str(append_to), keep_vba=True)
         default_ws = None
         used_names: set[str] = {ws.title for ws in wb.worksheets}
-    elif include_vba and VBA_TEMPLATE.exists():
-        wb = load_workbook(str(VBA_TEMPLATE), keep_vba=True)
+    elif include_vba and (vba_tpl := ensure_vba_template()) and vba_tpl.exists():
+        wb = load_workbook(str(vba_tpl), keep_vba=True)
         # Remove a sheet padrão do template
         default_ws = wb.active
         used_names: set[str] = set()
