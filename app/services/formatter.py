@@ -93,6 +93,9 @@ def _parse_pipe_table(raw_text: str) -> list[list[str]]:
             continue
         if re.match(r"^[\s|:\-]+$", line):
             continue
+        # Ignora code fences do Markdown (```) que o Gemini às vezes adiciona
+        if re.match(r"^`{3}", line):
+            continue
         if "|" in line:
             cells = [c.strip() for c in line.split("|")]
             if cells and cells[0] == "":
