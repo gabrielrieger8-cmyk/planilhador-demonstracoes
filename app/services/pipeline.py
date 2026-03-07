@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.config import GEMINI_API_KEY, ANTHROPIC_API_KEY, ADOBE_CLIENT_ID, ADOBE_CLIENT_SECRET
+from app.config import ANTHROPIC_API_KEY, ADOBE_CLIENT_ID, ADOBE_CLIENT_SECRET, gemini_key_pool
 from app.jobs import Job, JobProgress
 from app.main import _post_to_portal, APP_NAME
 from app.services.classifier import classificar
@@ -34,16 +34,20 @@ from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 
 logger = logging.getLogger("planilhador")
 
-MAX_WORKERS = 10
+MAX_WORKERS = 5
 # Limita classificações simultâneas para evitar respostas truncadas da API
 _classify_semaphore = threading.Semaphore(5)
 
 
 def _api_key_for(model: str | None) -> str:
-    """Retorna a API key correta para o modelo."""
+    """Retorna a API key correta para o modelo.
+
+    Para Gemini, usa o pool de keys (round-robin) para distribuir
+    carga entre múltiplas keys e evitar rate limits.
+    """
     if model and model.startswith("claude-"):
         return ANTHROPIC_API_KEY
-    return GEMINI_API_KEY
+    return gemini_key_pool.next_key()
 
 
 def process_job(job: Job) -> None:
@@ -221,7 +225,6 @@ def _process_single_file(
             else:
                 extract_result = extrair_balancete(
                     pdf_path, paginas=paginas,
-                    api_key=GEMINI_API_KEY,
                     on_progress=on_extract_progress,
                     model=extractor_model,
                 )
@@ -236,7 +239,6 @@ def _process_single_file(
             else:
                 extract_result = extrair_demonstracao(
                     pdf_path, tipo, paginas=paginas,
-                    api_key=GEMINI_API_KEY,
                     on_progress=on_extract_progress,
                     model=extractor_model,
                 )

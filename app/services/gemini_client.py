@@ -19,9 +19,10 @@ import fitz
 from app.config import (
     CLASSIFIER_MODEL,
     EXTRACTOR_MODEL,
-    GEMINI_API_KEY,
     GEMINI_MODELS,
     calcular_custo_gemini,
+    gemini_key_pool,
+    gemini_semaphore,
 )
 
 logger = logging.getLogger("planilhador")
@@ -61,12 +62,10 @@ class GeminiResult:
 # ---------------------------------------------------------------------------
 
 def _get_client(api_key: str | None = None):
-    """Cria client Gemini."""
+    """Cria client Gemini. Usa o pool de keys se nenhuma key for fornecida."""
     from google import genai
 
-    key = api_key or GEMINI_API_KEY
-    if not key:
-        raise ValueError("GEMINI_API_KEY não configurada.")
+    key = api_key or gemini_key_pool.next_key()
     return genai.Client(api_key=key)
 
 
@@ -79,7 +78,7 @@ def _call_gemini(
     max_retries: int = 5,
     response_mime_type: str | None = None,
 ):
-    """Chama Gemini com retry e exponential backoff."""
+    """Chama Gemini com retry, exponential backoff e semáforo global."""
     for attempt in range(max_retries):
         try:
             config = {
@@ -88,11 +87,12 @@ def _call_gemini(
             }
             if response_mime_type:
                 config["response_mime_type"] = response_mime_type
-            response = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
-            )
+            with gemini_semaphore:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=config,
+                )
             return response
         except Exception as exc:
             error_str = str(exc).lower()

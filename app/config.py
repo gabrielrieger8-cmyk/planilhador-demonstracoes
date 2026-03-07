@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import itertools
 import logging
 import os
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -23,6 +25,41 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 ADOBE_CLIENT_ID = os.getenv("ADOBE_CLIENT_ID", "")
 ADOBE_CLIENT_SECRET = os.getenv("ADOBE_CLIENT_SECRET", "")
+
+# Pool de keys Gemini (para escalar com múltiplos usuários simultâneos)
+# Formato: GEMINI_API_KEYS=key1,key2,key3 (vírgula-separado)
+# Se não definido, usa GEMINI_API_KEY como pool de 1 key
+_gemini_keys_raw = os.getenv("GEMINI_API_KEYS", "")
+GEMINI_API_KEYS: list[str] = [k.strip() for k in _gemini_keys_raw.split(",") if k.strip()]
+if not GEMINI_API_KEYS and GEMINI_API_KEY:
+    GEMINI_API_KEYS = [GEMINI_API_KEY]
+
+
+class KeyPool:
+    """Pool thread-safe de API keys com round-robin."""
+
+    def __init__(self, keys: list[str]):
+        self._keys = keys
+        self._cycle = itertools.cycle(keys) if keys else None
+        self._lock = threading.Lock()
+
+    def next_key(self) -> str:
+        """Retorna a próxima key do pool (round-robin)."""
+        if not self._cycle:
+            raise ValueError("Nenhuma API key configurada no pool.")
+        with self._lock:
+            return next(self._cycle)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
+gemini_key_pool = KeyPool(GEMINI_API_KEYS)
+
+# Semáforo global para limitar chamadas simultâneas à API Gemini.
+# Com N keys, permite N × 5 chamadas paralelas (margem para RPM de cada key).
+GEMINI_MAX_CONCURRENT = max(len(GEMINI_API_KEYS) * 5, 10)
+gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_project_root / 'data.db'}")
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(_project_root / "uploads"))
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
@@ -164,3 +201,9 @@ def setup_logging(level: int = logging.INFO) -> logging.Logger:
 
 
 logger = setup_logging()
+
+if GEMINI_API_KEYS:
+    logger.info(
+        "Gemini key pool: %d key(s), max %d chamadas simultâneas",
+        len(GEMINI_API_KEYS), GEMINI_MAX_CONCURRENT,
+    )
