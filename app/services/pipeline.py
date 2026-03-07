@@ -34,7 +34,7 @@ from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 
 logger = logging.getLogger("planilhador")
 
-MAX_WORKERS = 5
+MAX_WORKERS = 8
 # Limita classificações simultâneas para evitar respostas truncadas da API
 _classify_semaphore = threading.Semaphore(5)
 

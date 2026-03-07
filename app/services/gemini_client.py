@@ -22,6 +22,7 @@ from app.config import (
     GEMINI_MODELS,
     calcular_custo_gemini,
     gemini_key_pool,
+    gemini_rate_limiter,
     gemini_semaphore,
 )
 
@@ -87,6 +88,7 @@ def _call_gemini(
             }
             if response_mime_type:
                 config["response_mime_type"] = response_mime_type
+            gemini_rate_limiter.wait()
             with gemini_semaphore:
                 response = client.models.generate_content(
                     model=model,

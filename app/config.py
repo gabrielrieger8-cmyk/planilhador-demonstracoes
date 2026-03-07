@@ -54,12 +54,41 @@ class KeyPool:
         return len(self._keys)
 
 
+class RateLimiter:
+    """Rate limiter com staggering para evitar bursts na API.
+
+    Garante um intervalo mínimo entre chamadas consecutivas.
+    Com N keys e RPM de 1000, o intervalo seguro é ~60/RPM segundos por key.
+    """
+
+    def __init__(self, min_interval: float = 0.15):
+        self._min_interval = min_interval
+        self._lock = threading.Lock()
+        self._last_call = 0.0
+
+    def wait(self) -> None:
+        """Bloqueia até que o intervalo mínimo tenha passado."""
+        import time as _time
+        with self._lock:
+            now = _time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                _time.sleep(self._min_interval - elapsed)
+            self._last_call = _time.monotonic()
+
+
 gemini_key_pool = KeyPool(GEMINI_API_KEYS)
 
 # Semáforo global para limitar chamadas simultâneas à API Gemini.
 # Com N keys, permite N × 5 chamadas paralelas (margem para RPM de cada key).
 GEMINI_MAX_CONCURRENT = max(len(GEMINI_API_KEYS) * 5, 10)
 gemini_semaphore = threading.Semaphore(GEMINI_MAX_CONCURRENT)
+
+# Rate limiter: intervalo mínimo entre chamadas para evitar bursts.
+# 150ms = ~6.6 req/s por thread que chama wait(), bem abaixo do burst limit.
+# Com múltiplas keys, reduz o intervalo proporcionalmente.
+_rate_interval = 0.15 / max(len(GEMINI_API_KEYS), 1)
+gemini_rate_limiter = RateLimiter(min_interval=_rate_interval)
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_project_root / 'data.db'}")
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", str(_project_root / "uploads"))
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
