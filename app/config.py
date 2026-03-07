@@ -79,6 +79,11 @@ GEMINI_MODELS: dict[str, dict] = {
         "input_price": 0.15,
         "output_price": 3.50,
     },
+    "gemini-3-flash-preview": {
+        "label": "Gemini 3 Flash",
+        "input_price": 0.50,
+        "output_price": 3.00,
+    },
 }
 
 ANTHROPIC_MODELS: dict[str, dict] = {
