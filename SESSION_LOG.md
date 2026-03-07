@@ -2,6 +2,37 @@
 
 ---
 
+## Sessao — 2026-03-07
+
+### Objetivo
+Diagnosticar e corrigir bug onde Balancetes de Outubro e Novembro saiam com colunas incompletas/deslocadas, enquanto Dezembro saia correto.
+
+### Problema
+- Outubro e Novembro: Tipo sempre vazio, Codigo vazio, "Classificacao" continha o numero da Conta, "Descricao" continha o codigo de classificacao, descricao real desaparecia, e valores numericos deslocados 1 posicao para direita
+- Dezembro: tudo correto (Tipo A/D, Codigo, Classificacao, Descricao, valores alinhados)
+- Validacao falhava com diferencas na casa dos bilhoes para Out/Nov
+
+### Causa Raiz
+O Gemini as vezes envolve a saida em code fences Markdown (\`\`\`). Quando isso acontecia:
+1. `_parse_pipe_table()` tratava a linha \`\`\` como `rows[0]` (1 celula)
+2. Header check precisava de `len(rows[0]) >= 4` → falhava
+3. Fallback column mapping era acionado com `num_cols=1` → mapeamento completamente errado
+4. O header REAL (row index 1) era descartado pelo filtro de "headers repetidos"
+5. Resultado: todas as colunas deslocadas — "A" do Tipo ia para Saldo Anterior (`_parse_br_number("A")` → 0), e os valores reais deslocavam 1 posicao
+
+Comportamento nao-deterministico: Dezembro funcionava pq o Gemini NAO adicionou code fences naquela execucao.
+
+### Correcao
+Adicionado filtro de code fences em `_parse_pipe_table()` — linhas que comecam com \`\`\` sao ignoradas.
+
+### Arquivos modificados
+- `app/services/formatter.py` — filtro de code fences no parser de tabelas Markdown
+
+### Decisoes tecnicas
+- Fix no parser (3 linhas) em vez de no prompt do Gemini — mais robusto pois nao depende do comportamento do LLM
+
+---
+
 ## Sessao 1 — 2026-02-27
 
 ### Objetivo
