@@ -25,11 +25,26 @@ Comportamento nao-deterministico: Dezembro funcionava pq o Gemini NAO adicionou 
 ### Correcao
 Adicionado filtro de code fences em `_parse_pipe_table()` — linhas que comecam com \`\`\` sao ignoradas.
 
+### Pool de API Keys Gemini (round-robin)
+Implementado sistema de pool de keys para escalar com multiplos usuarios simultaneos:
+- `KeyPool` com round-robin thread-safe em `config.py`
+- Suporte a `GEMINI_API_KEYS=key1,key2,...` no `.env` (comma-separated)
+- Fallback para `GEMINI_API_KEY` unica se pool nao configurado
+- Semaforo global (`N_keys × 5`) para limitar chamadas simultaneas
+- Pipeline usa pool em vez de key fixa para todas as chamadas Gemini
+- `MAX_WORKERS` reduzido de 10 para 5 por job (evita 100 threads com 10 jobs)
+
 ### Arquivos modificados
 - `app/services/formatter.py` — filtro de code fences no parser de tabelas Markdown
+- `app/config.py` — `GEMINI_API_KEYS`, `KeyPool`, `gemini_key_pool`, `gemini_semaphore`
+- `app/services/gemini_client.py` — `_get_client` usa pool, `_call_gemini` usa semaforo
+- `app/services/pipeline.py` — `_api_key_for` usa pool, `MAX_WORKERS=5`, removido import direto de `GEMINI_API_KEY`
 
 ### Decisoes tecnicas
-- Fix no parser (3 linhas) em vez de no prompt do Gemini — mais robusto pois nao depende do comportamento do LLM
+- Fix do code fence no parser (3 linhas) em vez de no prompt — mais robusto
+- Round-robin escolhido por simplicidade vs tracking de rate limit (premature optimization)
+- Semaforo global = N_keys × 5 para margem com RPM de cada key
+- MAX_WORKERS=5 por job: com 10 jobs simultaneos = 50 threads max (vs 100 anterior)
 
 ---
 
