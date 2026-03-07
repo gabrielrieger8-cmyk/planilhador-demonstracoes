@@ -272,15 +272,15 @@ def export_csv(dados: dict, tipo: str, output_path: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 BALANCETE_COLUMNS = [
-    "Tipo", "Código", "Classificação", "Descrição", "Nível", "Natureza",
-    "Saldo Anterior", "Débitos", "Créditos", "Saldo Atual",
+    "Tipo", "Código", "Classificação", "Descrição", "Nível",
+    "Saldo Anterior", "Nat. SA", "Débitos", "Créditos", "Saldo Atual", "Natureza",
 ]
 _BALANCETE_CSV_COLUMNS = [
-    "Código", "Classificação", "Descrição", "Nível", "Natureza",
-    "Saldo Anterior", "Débitos", "Créditos", "Saldo Atual",
+    "Código", "Classificação", "Descrição", "Nível",
+    "Saldo Anterior", "Nat. SA", "Débitos", "Créditos", "Saldo Atual", "Natureza",
 ]
-BALANCETE_NUMERIC_COLS = {6, 7, 8, 9}
-BALANCETE_COL_WIDTHS = {0: 5, 1: 14, 2: 18, 3: 42, 4: 8, 5: 10, 6: 18, 7: 18, 8: 18, 9: 18}
+BALANCETE_NUMERIC_COLS = {5, 7, 8, 9}
+BALANCETE_COL_WIDTHS = {0: 5, 1: 14, 2: 18, 3: 42, 4: 8, 5: 18, 6: 8, 7: 18, 8: 18, 9: 18, 10: 10}
 
 
 def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -> None:
@@ -321,11 +321,12 @@ def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -
             conta.get("classificacao", ""),
             conta.get("descricao", ""),
             conta.get("nivel", ""),
-            conta.get("natureza", ""),
             conta.get("saldo_anterior", 0) or 0,
+            conta.get("natureza_sa", ""),
             conta.get("debitos", 0) or 0,
             conta.get("creditos", 0) or 0,
             conta.get("saldo_atual", 0) or 0,
+            conta.get("natureza_sat", conta.get("natureza", "")),
         ]
         ws.append(row)
 
@@ -343,7 +344,7 @@ def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -
             if col_idx in BALANCETE_NUMERIC_COLS:
                 cell.number_format = BR_NUMBER_FORMAT
                 cell.alignment = RIGHT_ALIGN
-            elif col_idx in (0, 4, 5):
+            elif col_idx in (0, 4, 6, 10):
                 cell.alignment = CENTER_ALIGN
             else:
                 cell.alignment = LEFT_ALIGN
@@ -370,8 +371,8 @@ def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -
                         child_rows.append(child_row)
 
             if child_rows:
-                # Colunas numéricas: G (Saldo Ant), H (Déb), I (Créd), J (Saldo Atual)
-                for col_letter in ("G", "H", "I", "J"):
+                # Colunas numéricas: F (Saldo Ant), H (Déb), I (Créd), J (Saldo Atual)
+                for col_letter in ("F", "H", "I", "J"):
                     refs = "+".join(f"{col_letter}{r}" for r in sorted(child_rows))
                     ws.cell(row=parent_row, column=_col_idx(col_letter)).value = f"={refs}"
 
@@ -405,11 +406,12 @@ def _export_balancete_csv(dados: dict, output_path: Path) -> Path:
                 conta.get("classificacao", ""),
                 conta.get("descricao", ""),
                 conta.get("nivel", ""),
-                conta.get("natureza", ""),
                 conta.get("saldo_anterior", 0),
+                conta.get("natureza_sa", ""),
                 conta.get("debitos", 0),
                 conta.get("creditos", 0),
                 conta.get("saldo_atual", 0),
+                conta.get("natureza_sat", conta.get("natureza", "")),
             ])
 
     logger.info("CSV balancete gerado: %s (%d contas)", output_path, len(contas))

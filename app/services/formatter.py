@@ -824,12 +824,19 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
         creditos = abs(creditos_raw)
         saldo_atual = _apply_dc_sign(saldo_at_raw, dc_sat, natureza) if dc_sat else saldo_at_raw
 
+        # Natureza real de cada saldo (D/C extraído do PDF).
+        # Se não veio indicador explícito, infere pela natureza do grupo contábil.
+        natureza_sa = dc_sa if dc_sa else natureza
+        natureza_sat = dc_sat if dc_sat else natureza
+
         contas.append({
             "codigo_conta": codigo,
             "classificacao": classificacao,
             "descricao": descricao,
             "nivel": nivel,
-            "natureza": natureza,
+            "natureza_grupo": natureza,
+            "natureza_sa": natureza_sa,
+            "natureza_sat": natureza_sat,
             "is_totalizador": is_totalizador,
             "saldo_anterior": round(saldo_anterior, 2),
             "debitos": round(debitos, 2),
