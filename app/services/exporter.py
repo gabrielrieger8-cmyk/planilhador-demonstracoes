@@ -12,8 +12,6 @@ from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from app.vba.build_template import ensure_vba_template, TEMPLATE_PATH as VBA_TEMPLATE
-
 logger = logging.getLogger("planilhador")
 
 # ---------------------------------------------------------------------------
@@ -138,7 +136,6 @@ def export_excel_multi(
     output_path: Path,
     formula_opts: dict[str, bool] | None = None,
     append_to: Path | None = None,
-    include_vba: bool = False,
 ) -> Path:
     """Gera Excel com abas agrupadas por tipo de demonstração.
 
@@ -151,7 +148,6 @@ def export_excel_multi(
         output_path: Caminho para salvar o arquivo.
         formula_opts: Dict com chaves 'dre', 'balanco', 'balancete' (bool).
         append_to: Se fornecido, abre este workbook existente e adiciona abas.
-        include_vba: Se True, embute macros VBA do consolidador (salva como .xlsm).
 
     Returns:
         Path do arquivo gerado.
@@ -161,14 +157,9 @@ def export_excel_multi(
 
     # Decide se abre workbook existente ou cria novo
     if append_to and append_to.exists():
-        wb = load_workbook(str(append_to), keep_vba=True)
+        wb = load_workbook(str(append_to))
         default_ws = None
         used_names: set[str] = {ws.title for ws in wb.worksheets}
-    elif include_vba and (vba_tpl := ensure_vba_template()) and vba_tpl.exists():
-        wb = load_workbook(str(vba_tpl), keep_vba=True)
-        # Remove a sheet padrão do template
-        default_ws = wb.active
-        used_names: set[str] = set()
     else:
         wb = Workbook()
         default_ws = wb.active
@@ -234,13 +225,9 @@ def export_excel_multi(
 
                 tab_idx += 1
 
-    # Remove sheet padrão vazia do template VBA (se não foi usada)
+    # Remove sheet padrão vazia (se não foi usada)
     if default_ws is not None and len(wb.worksheets) > 1:
         wb.remove(default_ws)
-
-    # Ajusta extensão para .xlsm se tem VBA
-    if wb.vba_archive and output_path.suffix.lower() == ".xlsx":
-        output_path = output_path.with_suffix(".xlsm")
 
     wb.save(str(output_path))
     logger.info("Excel gerado: %s (%d aba(s))", output_path, tab_idx)

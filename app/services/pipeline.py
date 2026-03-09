@@ -148,12 +148,12 @@ def _process_single_file(
 
     db_file_id = getattr(file_info, "db_file_id", None)
 
-    def _log_stage(stage, message, level="info", detail=None):
+    def _log_stage(stage, message, status="info", duration_ms=None):
         _post_to_portal("processing-log", {
-            "uploaded_file_id": db_file_id, "app": APP_NAME,
-            "stage": stage, "level": level,
+            "file_id": db_file_id, "app": APP_NAME,
+            "stage": stage, "status": status,
             "message": f"[{file_info.name}] {message}",
-            "detail": detail,
+            "duration_ms": duration_ms,
         })
 
     # --- ETAPA 1: Classificação (com semáforo para limitar concorrência) ---
@@ -171,7 +171,7 @@ def _process_single_file(
     custo_total += classificacao.get("custo_usd", 0)
 
     if not demonstracoes:
-        _log_stage("classification", "Nenhuma demonstração reconhecida", level="error")
+        _log_stage("classification", "Nenhuma demonstração reconhecida", status="error")
         raise ValueError("Nenhuma demonstração financeira reconhecida no PDF.")
 
     _log_stage("classification", f"Classificação OK: {[d['tipo'] for d in demonstracoes]}")
@@ -328,7 +328,6 @@ def _process_single_file(
         actual_path = export_excel_multi(
             resultados, empresa, xlsx_path,
             formula_opts=job.formula_opts,
-            include_vba=job.include_vba,
         )
         progress.output_files.append(actual_path.name)
 
@@ -345,11 +344,8 @@ def _process_single_file(
             perm_out = perm_dir / f"{job.id}_{out_name}"
             shutil.copy2(str(out_path), str(perm_out))
             _post_to_portal("outputs", {
-                "uploaded_file_id": db_file_id, "app": APP_NAME,
-                "output_filename": out_name, "stored_path": str(perm_out),
-                "file_size_bytes": out_path.stat().st_size,
-                "processing_time_seconds": progress.time,
-                "processing_cost_usd": custo_total,
+                "file_id": db_file_id, "app": APP_NAME,
+                "output_type": out_name, "stored_path": str(perm_out),
             })
 
     _log_stage("export", f"Processamento concluído: {len(resultados)} demonstrações, custo=${custo_total:.6f}")
@@ -389,7 +385,6 @@ def _consolidate_excel(job: Job) -> None:
     export_excel_multi(
         all_demos, empresa, consolidated_path,
         formula_opts=job.formula_opts,
-        include_vba=job.include_vba,
     )
     logger.info(
         "Excel consolidado gerado: %s (%d abas)",

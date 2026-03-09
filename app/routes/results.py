@@ -30,7 +30,7 @@ async def results(job_id: str):
     output_files = []
     if job.output_dir and job.output_dir.exists():
         for f in sorted(job.output_dir.iterdir()):
-            if f.suffix.lower() in (".csv", ".xlsx", ".xlsm"):
+            if f.suffix.lower() in (".csv", ".xlsx"):
                 ext = f.suffix.lower().lstrip(".")
                 output_files.append({
                     "name": f.name,
@@ -64,7 +64,6 @@ async def download(job_id: str, filename: str):
     media_types = {
         ".csv": "text/csv",
         ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.12",
     }
     media_type = media_types.get(file_path.suffix.lower(), "application/octet-stream")
 

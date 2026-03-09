@@ -63,8 +63,6 @@ class Job:
     })
     # Resultados por arquivo para consolidação multi-aba
     file_results: list[list[dict]] = field(default_factory=list)
-    # Incluir macros VBA do consolidador no Excel
-    include_vba: bool = False
 
 
 # Store global

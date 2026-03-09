@@ -32,7 +32,6 @@ class ProcessRequest(BaseModel):
     formulas_dre: bool = False
     formulas_balanco: bool = True
     formulas_balancete: bool = False
-    include_vba: bool = False
 
 
 class ReorderRequest(BaseModel):
@@ -73,7 +72,6 @@ async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest())
 
     job.models = models
     job.skip_format = body.skip_format
-    job.include_vba = body.include_vba
     job.formula_opts = {
         "dre": body.formulas_dre,
         "balanco": body.formulas_balanco,

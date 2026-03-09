@@ -84,8 +84,8 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
         if username:
             _post_to_portal("log", {
                 "username": username, "app": APP_NAME,
-                "action": "page_view", "detail": {"path": str(request.url.path)},
-                "ip_address": request.client.host if request.client else None,
+                "path": str(request.url.path), "method": request.method,
+                "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip() or None,
             })
             return await call_next(request)
         # 2) Check Basic Auth
@@ -98,8 +98,8 @@ class SSOAuthMiddleware(BaseHTTPMiddleware):
                         and secrets.compare_digest(pwd, AUTH_PASSWORD)):
                     _post_to_portal("log", {
                         "username": user, "app": APP_NAME,
-                        "action": "page_view", "detail": {"path": str(request.url.path)},
-                        "ip_address": request.client.host if request.client else None,
+                        "path": str(request.url.path), "method": request.method,
+                        "ip": request.headers.get("x-forwarded-for", request.client.host if request.client else "").split(",")[0].strip() or None,
                     })
                     return await call_next(request)
         # 3) Redirect browser or 401 for API
@@ -176,8 +176,7 @@ async def feedback(body: dict):
     _post_to_portal("feedback", {
         "app": APP_NAME,
         "rating": body.get("rating"),
-        "missing_info": body.get("missing_info"),
-        "context": body.get("context"),
+        "comment": body.get("missing_info"),
     })
     return {"ok": True}
 
