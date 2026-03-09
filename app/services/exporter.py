@@ -323,6 +323,9 @@ def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -
         classif = conta.get("classificacao", "")
         classif_to_row[classif] = current_row
 
+        nivel = conta.get("nivel", 1)
+        desc_indent = max(0, nivel - 1)
+
         for col_idx in range(len(BALANCETE_COLUMNS)):
             cell = ws.cell(row=current_row, column=col_idx + 1)
             cell.border = THIN_BORDER
@@ -333,6 +336,8 @@ def _write_balancete(ws, dados: dict, titulo: str, use_formulas: bool = False) -
                 cell.alignment = RIGHT_ALIGN
             elif col_idx in (0, 4, 6, 10):
                 cell.alignment = CENTER_ALIGN
+            elif col_idx == 3:  # Descrição
+                cell.alignment = Alignment(horizontal="left", vertical="center", indent=desc_indent)
             else:
                 cell.alignment = LEFT_ALIGN
 
@@ -461,13 +466,16 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
         classificacao = linha.get("classificacao", "")
         is_destaque = is_subtotal or nivel <= 1
 
-        indent = "  " * (nivel - 1)
-        descricao = f"{indent}{linha.get('descricao', '')}"
+        descricao = linha.get('descricao', '')
+        desc_indent = max(0, nivel - 1)
 
         ws.append(["A" if is_destaque else "", classificacao, descricao, valor])
         current_row = ws.max_row
         if first_data_row is None:
             first_data_row = current_row
+
+        # Indentação nativa do Excel na descrição
+        ws.cell(row=current_row, column=3).alignment = Alignment(horizontal="left", vertical="center", indent=desc_indent)
 
         if use_formulas:
             if is_subtotal:
@@ -508,11 +516,10 @@ def _write_dre(ws, dados: dict, titulo: str, use_formulas: bool = True) -> None:
                 cell.alignment = CENTER_ALIGN
             elif col_idx == 1:  # Classificação
                 cell.alignment = LEFT_ALIGN
-            elif col_idx == 2:  # Descrição
-                cell.alignment = LEFT_ALIGN
             elif col_idx == 3:  # Valor
                 cell.number_format = BR_NUMBER_FORMAT
                 cell.alignment = RIGHT_ALIGN
+            # col_idx == 2 (Descrição) já tem alignment definido acima
 
     _close_grouper()  # finaliza última agrupadora pendente
 
@@ -587,8 +594,8 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
         nivel = linha.get("nivel", 1)
         is_subtotal = linha.get("is_subtotal", False)
         is_agrupadora = linha.get("is_agrupadora", False)
-        indent = "  " * (nivel - 1)
-        descricao = f"{indent}{linha.get('descricao', '')}"
+        descricao = linha.get('descricao', '')
+        desc_indent = max(0, nivel - 1)
 
         is_destaque = is_subtotal or nivel <= 1
 
@@ -642,7 +649,7 @@ def _write_dre_comparativo(ws, demos_list: list[dict], titulo: str, use_formulas
             if col_idx == 0:  # Tipo
                 cell.alignment = CENTER_ALIGN
             elif col_idx == 1:  # Descrição
-                cell.alignment = LEFT_ALIGN
+                cell.alignment = Alignment(horizontal="left", vertical="center", indent=desc_indent)
             else:
                 cell.alignment = RIGHT_ALIGN
                 cell.number_format = BR_NUMBER_FORMAT
@@ -738,7 +745,7 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
 
             sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
             sub_total = sub.get("total", 0) or 0
-            ws.append(["A", "", f"  {sub_title}", 0 if use_formulas else sub_total])
+            ws.append(["A", "", sub_title, 0 if use_formulas else sub_total])
             sub_header_row = ws.max_row
             sub_total_rows[(section_key, sub_key)] = sub_header_row
             sub_rows_for_section.append(sub_header_row)
@@ -746,6 +753,7 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
                 cell = ws.cell(row=sub_header_row, column=c)
                 cell.font = NORMAL_FONT
                 cell.border = THIN_BORDER
+            ws.cell(row=sub_header_row, column=3).alignment = Alignment(horizontal="left", vertical="center", indent=1)
             ws.cell(row=sub_header_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
             ws.cell(row=sub_header_row, column=VAL_COL).alignment = RIGHT_ALIGN
 
@@ -753,16 +761,18 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
             for conta in sub.get("contas", []):
                 nivel = conta.get("nivel", 3)
                 is_sub = conta.get("is_subtotal", False)
-                indent = "    " * max(1, nivel - 2)
+                conta_indent = max(1, nivel - 1)
                 classif = conta.get("classificacao", "")
-                ws.append(["A" if is_sub else "", classif, f"{indent}{conta.get('descricao', '')}", conta.get("valor", 0)])
+                ws.append(["A" if is_sub else "", classif, conta.get('descricao', ''), conta.get("valor", 0)])
                 current_row = ws.max_row
                 conta_rows.append(current_row)
                 for c in range(1, len(BALANCO_COLUMNS) + 1):
                     cell = ws.cell(row=current_row, column=c)
                     cell.border = THIN_BORDER
                     cell.font = NORMAL_FONT
-                    if c == VAL_COL:
+                    if c == 3:  # Descrição
+                        cell.alignment = Alignment(horizontal="left", vertical="center", indent=conta_indent)
+                    elif c == VAL_COL:
                         cell.number_format = BR_NUMBER_FORMAT
                         cell.alignment = RIGHT_ALIGN
 
@@ -800,13 +810,14 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
 
         sub_title = "Circulante" if sub_key == "circulante" else "Não Circulante"
         sub_total = sub.get("total", 0) or 0
-        ws.append(["A", "", f"  {sub_title}", 0 if use_formulas else sub_total])
+        ws.append(["A", "", sub_title, 0 if use_formulas else sub_total])
         sub_header_row = ws.max_row
         passivo_sub_rows.append(sub_header_row)
         for c in range(1, len(BALANCO_COLUMNS) + 1):
             cell = ws.cell(row=sub_header_row, column=c)
             cell.font = NORMAL_FONT
             cell.border = THIN_BORDER
+        ws.cell(row=sub_header_row, column=3).alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.cell(row=sub_header_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
         ws.cell(row=sub_header_row, column=VAL_COL).alignment = RIGHT_ALIGN
 
@@ -814,16 +825,18 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
         for conta in sub.get("contas", []):
             nivel = conta.get("nivel", 3)
             is_sub = conta.get("is_subtotal", False)
-            indent = "    " * max(1, nivel - 2)
+            conta_indent = max(1, nivel - 1)
             classif = conta.get("classificacao", "")
-            ws.append(["A" if is_sub else "", classif, f"{indent}{conta.get('descricao', '')}", conta.get("valor", 0)])
+            ws.append(["A" if is_sub else "", classif, conta.get('descricao', ''), conta.get("valor", 0)])
             current_row = ws.max_row
             conta_rows.append(current_row)
             for c in range(1, len(BALANCO_COLUMNS) + 1):
                 cell = ws.cell(row=current_row, column=c)
                 cell.border = THIN_BORDER
                 cell.font = NORMAL_FONT
-                if c == VAL_COL:
+                if c == 3:  # Descrição
+                    cell.alignment = Alignment(horizontal="left", vertical="center", indent=conta_indent)
+                elif c == VAL_COL:
                     cell.number_format = BR_NUMBER_FORMAT
                     cell.alignment = RIGHT_ALIGN
 
@@ -834,13 +847,14 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
     # Patrimônio Líquido (subsecção do PASSIVO)
     if pl.get("contas"):
         pl_total = pl.get("total", 0) or 0
-        ws.append(["A", "", "  Patrimônio Líquido", 0 if use_formulas else pl_total])
+        ws.append(["A", "", "Patrimônio Líquido", 0 if use_formulas else pl_total])
         pl_sub_row = ws.max_row
         passivo_sub_rows.append(pl_sub_row)
         for c in range(1, len(BALANCO_COLUMNS) + 1):
             cell = ws.cell(row=pl_sub_row, column=c)
             cell.font = NORMAL_FONT
             cell.border = THIN_BORDER
+        ws.cell(row=pl_sub_row, column=3).alignment = Alignment(horizontal="left", vertical="center", indent=1)
         ws.cell(row=pl_sub_row, column=VAL_COL).number_format = BR_NUMBER_FORMAT
         ws.cell(row=pl_sub_row, column=VAL_COL).alignment = RIGHT_ALIGN
 
@@ -848,14 +862,16 @@ def _write_balanco(ws, dados: dict, titulo: str, use_formulas: bool = True) -> N
         for conta in pl.get("contas", []):
             is_sub = conta.get("is_subtotal", False)
             classif = conta.get("classificacao", "")
-            ws.append(["A" if is_sub else "", classif, f"    {conta.get('descricao', '')}", conta.get("valor", 0)])
+            ws.append(["A" if is_sub else "", classif, conta.get('descricao', ''), conta.get("valor", 0)])
             current_row = ws.max_row
             pl_conta_rows.append(current_row)
             for c in range(1, len(BALANCO_COLUMNS) + 1):
                 cell = ws.cell(row=current_row, column=c)
                 cell.border = THIN_BORDER
                 cell.font = NORMAL_FONT
-                if c == VAL_COL:
+                if c == 3:  # Descrição
+                    cell.alignment = Alignment(horizontal="left", vertical="center", indent=2)
+                elif c == VAL_COL:
                     cell.number_format = BR_NUMBER_FORMAT
                     cell.alignment = RIGHT_ALIGN
 
@@ -1002,6 +1018,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
             sub_header_row = ws.max_row
             sub_header_rows.append(sub_header_row)
             _style_row(sub_header_row)
+            ws.cell(row=sub_header_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
             # Contas de detalhe
             conta_rows = []
@@ -1017,7 +1034,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
                         desc = contas[i].get("descricao", "")
                         break
 
-                row_data = ["", f"    {desc}"]
+                row_data = ["", desc]
                 for dados in all_dados:
                     contas = dados.get(section_key, {}).get(sub_key, {}).get("contas", [])
                     if i < len(contas):
@@ -1027,6 +1044,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
                 ws.append(row_data)
                 conta_rows.append(ws.max_row)
                 _style_row(ws.max_row)
+                ws.cell(row=ws.max_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=2)
 
             # Fórmula SUM no header da subsecção
             if use_formulas and conta_rows:
@@ -1080,6 +1098,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
         sub_header_row = ws.max_row
         passivo_sub_rows.append(sub_header_row)
         _style_row(sub_header_row)
+        ws.cell(row=sub_header_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
         conta_rows = []
         max_contas = max(
@@ -1094,7 +1113,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
                     desc = contas[i].get("descricao", "")
                     break
 
-            row_data = ["", f"    {desc}"]
+            row_data = ["", desc]
             for dados in all_dados:
                 contas = dados.get("passivo", {}).get(sub_key, {}).get("contas", [])
                 if i < len(contas):
@@ -1104,6 +1123,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
             ws.append(row_data)
             conta_rows.append(ws.max_row)
             _style_row(ws.max_row)
+            ws.cell(row=ws.max_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=2)
 
         if use_formulas and conta_rows:
             first_r, last_r = conta_rows[0], conta_rows[-1]
@@ -1123,6 +1143,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
         pl_sub_row = ws.max_row
         passivo_sub_rows.append(pl_sub_row)
         _style_row(pl_sub_row)
+        ws.cell(row=pl_sub_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=1)
 
         pl_conta_rows = []
         max_pl_contas = max(
@@ -1137,7 +1158,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
                     desc = contas[i].get("descricao", "")
                     break
 
-            row_data = ["", f"    {desc}"]
+            row_data = ["", desc]
             for dados in all_dados:
                 contas = dados.get("patrimonio_liquido", {}).get("contas", [])
                 if i < len(contas):
@@ -1147,6 +1168,7 @@ def _write_balanco_comparativo(ws, demos_list: list[dict], titulo: str, use_form
             ws.append(row_data)
             pl_conta_rows.append(ws.max_row)
             _style_row(ws.max_row)
+            ws.cell(row=ws.max_row, column=2).alignment = Alignment(horizontal="left", vertical="center", indent=2)
 
         if use_formulas and pl_conta_rows:
             first_r, last_r = pl_conta_rows[0], pl_conta_rows[-1]
