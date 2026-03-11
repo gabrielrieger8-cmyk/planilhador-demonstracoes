@@ -11,11 +11,15 @@ CORREÇÕES A FAZER:
    - Contas de nível 1 e 2 quase sempre são A.
    - Contas no último nível da hierarquia quase sempre são D.
 
-2. NATUREZA (D/C):
-   - Grupo 1 (Ativo): natureza D (Devedora)
-   - Grupo 2 (Passivo + PL): natureza C (Credora)
-   - Grupo 3 (Custos e Despesas): natureza D (Devedora)
-   - Grupo 4 (Receitas): natureza C (Credora)
+2. NATUREZA (D/C) — DUAS COLUNAS SEPARADAS:
+   - natureza_anterior: D ou C do Saldo Anterior (indica se o saldo era devedor ou credor)
+   - natureza_atual: D ou C do Saldo Atual (indica se o saldo é devedor ou credor)
+   - Regra geral por grupo:
+     - Grupo 1 (Ativo): natureza D (Devedora)
+     - Grupo 2 (Passivo + PL): natureza C (Credora)
+     - Grupo 3 (Custos e Despesas): natureza D (Devedora)
+     - Grupo 4 (Receitas): natureza C (Credora)
+   - MAS: se o saldo for negativo/invertido, a natureza INVERTE (ex: ativo com saldo credor = "C")
    - Retificadoras têm natureza INVERSA ao grupo pai.
 
 3. SINAIS:
@@ -43,7 +47,8 @@ FORMATO DE SAÍDA — JSON:
       "classificacao": "01",
       "descricao": "ATIVO",
       "nivel": 1,
-      "natureza": "D",
+      "natureza_anterior": "D",
+      "natureza_atual": "D",
       "is_totalizador": true,
       "saldo_anterior": 1000000.00,
       "debitos": 500000.00,
