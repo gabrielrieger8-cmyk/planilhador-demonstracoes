@@ -41,10 +41,14 @@ def _parse_br_number(text: str) -> tuple[float, Optional[str]]:
 
     m = _BR_NUM_RE.match(text)
     if not m:
-        # Tenta extrair só dígitos
+        # Preserva sinal negativo via parênteses antes de limpar
+        # Ex: "R$ (1.000,00)" → negativo
+        is_paren_neg = "(" in text and ")" in text
         cleaned = re.sub(r"[^\d.,\-]", "", text)
         if not cleaned:
             return 0.0, None
+        if is_paren_neg:
+            cleaned = "-" + cleaned.lstrip("-")
         return _parse_br_number(cleaned)
 
     neg = m.group("neg") in ("(", "-")

@@ -86,6 +86,30 @@ def _build_title(empresa: str, tipo: str, periodo: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _same_plano_de_contas(demos: list[dict], tipo: str) -> bool:
+    """Verifica se todos os períodos têm exatamente o mesmo plano de contas."""
+    if len(demos) <= 1:
+        return True
+
+    def _contas(demo: dict) -> frozenset[str]:
+        dados = demo.get("dados", {})
+        if tipo == "dre":
+            return frozenset(l["descricao"] for l in dados.get("linhas", []))
+        elif tipo == "balanco_patrimonial":
+            nomes: set[str] = set()
+            for sec in ("ativo", "passivo"):
+                for sub in ("circulante", "nao_circulante"):
+                    for c in dados.get(sec, {}).get(sub, {}).get("contas", []):
+                        nomes.add(c.get("descricao", ""))
+            for c in dados.get("patrimonio_liquido", {}).get("contas", []):
+                nomes.add(c.get("descricao", ""))
+            return frozenset(nomes)
+        return frozenset()
+
+    ref = _contas(demos[0])
+    return all(_contas(d) == ref for d in demos[1:])
+
+
 def _unique_tab_name(name: str, used: set[str]) -> str:
     """Garante nome de aba único, adicionando sufixo se necessário."""
     base = _sanitize_tab_name(name)
@@ -136,6 +160,7 @@ def export_excel_multi(
     output_path: Path,
     formula_opts: dict[str, bool] | None = None,
     append_to: Path | None = None,
+    periodo_override: str = "",
 ) -> Path:
     """Gera Excel com abas agrupadas por tipo de demonstração.
 
@@ -187,13 +212,20 @@ def export_excel_multi(
 
     tab_idx = 0
     for tipo, demos in groups:
-        # DRE/Balanço multi-período: comparativo lado a lado
-        if len(demos) > 1 and tipo in ("dre", "balanco_patrimonial"):
+        # DRE/Balanço multi-período: comparativo lado a lado (só se plano de contas idêntico)
+        if len(demos) > 1 and tipo in ("dre", "balanco_patrimonial") and _same_plano_de_contas(demos, tipo):
             label = TIPO_LABELS.get(tipo, tipo)
-            tab_name = _unique_tab_name(label, used_names)
+            if periodo_override:
+                raw_name = f"{label} {periodo_override}"
+            else:
+                last_periodo = demos[-1].get("periodo", "")
+                short = _periodo_to_short(last_periodo)
+                raw_name = f"{label} {short}" if short else label
+            tab_name = _unique_tab_name(raw_name, used_names)
             ws = _get_ws(tab_name)
 
-            titulo = f"{empresa} - {label}" if empresa else label
+            periodo_titulo = periodo_override or demos[-1].get("periodo", "")
+            titulo = _build_title(empresa, tipo, periodo_titulo)
 
             if tipo == "dre":
                 _write_dre_comparativo(ws, demos, titulo, use_formulas=formula_opts.get("dre", False))
@@ -204,11 +236,11 @@ def export_excel_multi(
         else:
             # Single-period ou balancete: 1 aba por demonstração
             for demo in demos:
-                periodo = demo.get("periodo", "")
+                periodo = periodo_override or demo.get("periodo", "")
                 dados = demo.get("dados", {})
 
-                if len(demos) > 1 or len(groups) > 1:
-                    raw_name = _short_tab_name(tipo, periodo)
+                if periodo_override or len(demos) > 1 or len(groups) > 1:
+                    raw_name = f"{TIPO_LABELS.get(tipo, tipo)} {periodo}".strip() if periodo_override else _short_tab_name(tipo, demo.get("periodo", ""))
                 else:
                     raw_name = _build_title(empresa, tipo, periodo)
                 tab_name = _unique_tab_name(raw_name, used_names)

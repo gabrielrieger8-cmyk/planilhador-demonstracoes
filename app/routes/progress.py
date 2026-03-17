@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.config import (
-    GEMINI_API_KEY, ANTHROPIC_API_KEY, ALL_MODELS,
+    GEMINI_API_KEY, GEMINI_API_KEYS, ANTHROPIC_API_KEY, ALL_MODELS,
     CLASSIFIER_MODEL, EXTRACTOR_MODEL, FORMATTER_MODEL, logger,
 )
 from app.jobs import JobProgress, jobs
@@ -50,7 +50,7 @@ async def start_processing(job_id: str, body: ProcessRequest = ProcessRequest())
     if job.status == "processing":
         raise HTTPException(409, "Processamento já em andamento.")
 
-    if not GEMINI_API_KEY:
+    if not GEMINI_API_KEYS and not GEMINI_API_KEY:
         raise HTTPException(400, "GEMINI_API_KEY não configurada.")
 
     # Configura modelos (valida se existem no catálogo)

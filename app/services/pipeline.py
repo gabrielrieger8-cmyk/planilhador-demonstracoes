@@ -34,6 +34,62 @@ from app.services.adobe_ocr import has_native_text, ocr_with_adobe
 
 logger = logging.getLogger("planilhador")
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_MESES_ABREV_PT = {
+    "JANEIRO": "Jan", "FEVEREIRO": "Fev", "MARÇO": "Mar", "ABRIL": "Abr",
+    "MAIO": "Mai", "JUNHO": "Jun", "JULHO": "Jul", "AGOSTO": "Ago",
+    "SETEMBRO": "Set", "OUTUBRO": "Out", "NOVEMBRO": "Nov", "DEZEMBRO": "Dez",
+    "JAN": "Jan", "FEV": "Fev", "MAR": "Mar", "ABR": "Abr",
+    "MAI": "Mai", "JUN": "Jun", "JUL": "Jul", "AGO": "Ago",
+    "SET": "Set", "OUT": "Out", "NOV": "Nov", "DEZ": "Dez",
+}
+
+_ORD = {"1": "1º", "2": "2º", "3": "3º", "4": "4º"}
+
+
+def _filename_to_period(stem: str) -> str:
+    """Extrai período legível de um nome de arquivo PDF para usar como nome de aba.
+
+    Exemplos:
+      '1TRI2023'           → '1º TRI 2023'
+      'DRE_2TRI_2024'      → '2º TRI 2024'
+      'Balancete_Mar_2023' → 'Mar/2023'
+      'BP_31_12_2023'      → '2023'
+    """
+    text = stem.upper().replace("-", " ").replace("_", " ")
+
+    # Ano (2000-2099)
+    ano_m = re.search(r'\b(20\d{2})\b', text)
+    ano = ano_m.group(1) if ano_m else ""
+
+    # Semestre: 1SEM, 2SEM, 1SEMESTRE, etc.
+    sem_m = re.search(r'\b([12])[°º]?\s*SEM(?:ESTRE)?\b', text)
+    if sem_m:
+        return f"{_ORD.get(sem_m.group(1), sem_m.group(1))}º SEM {ano}".strip()
+
+    # Trimestre: 1TRI, 2TRI, 1TRIM, T1, Q1, etc.
+    tri_m = re.search(
+        r'\b([1-4])[°º]?\s*TRI(?:M(?:ESTRE)?)?\b'
+        r'|\bTRI(?:M)?\s*([1-4])\b'
+        r'|\bQ([1-4])\b',
+        text,
+    )
+    if tri_m:
+        num = tri_m.group(1) or tri_m.group(2) or tri_m.group(3)
+        return f"{_ORD.get(num, num)} TRI {ano}".strip()
+
+    # Mês por nome
+    for key, label in _MESES_ABREV_PT.items():
+        if re.search(rf'\b{key}\b', text):
+            return f"{label}/{ano[2:]}" if ano else label
+
+    # Fallback: só o ano
+    return ano or stem[:20]
+
+
 MAX_WORKERS = 8
 # Limita classificações simultâneas para evitar respostas truncadas da API
 _classify_semaphore = threading.Semaphore(5)
@@ -366,27 +422,33 @@ def _process_single_file(
 
 
 def _consolidate_excel(job: Job) -> None:
-    """Gera Excel consolidado com uma aba por período (todos os arquivos)."""
+    """Gera Excel consolidado com abas agrupadas por arquivo fonte."""
     output_dir = job.output_dir
     # Ordena por nome do arquivo para manter ordem cronológica
     sorted_results = sorted(job.file_results, key=lambda r: r["filename"])
 
-    all_demos = []
-    empresa = ""
-    for fr in sorted_results:
-        empresa = empresa or fr["empresa"]
-        for r in fr["resultados"]:
-            all_demos.append(r)
-
-    if not all_demos:
+    if not sorted_results:
         return
 
     consolidated_path = output_dir / "Consolidado.xlsx"
-    export_excel_multi(
-        all_demos, empresa, consolidated_path,
-        formula_opts=job.formula_opts,
-    )
+    empresa = ""
+    total_abas = 0
+
+    for i, fr in enumerate(sorted_results):
+        empresa = empresa or fr["empresa"]
+        if not fr["resultados"]:
+            continue
+        period_from_file = _filename_to_period(Path(fr["filename"]).stem)
+        # Cada arquivo é processado separadamente; abas são adicionadas ao mesmo workbook
+        export_excel_multi(
+            fr["resultados"], empresa, consolidated_path,
+            formula_opts=job.formula_opts,
+            append_to=consolidated_path if i > 0 else None,
+            periodo_override=period_from_file,
+        )
+        total_abas += len(fr["resultados"])
+
     logger.info(
-        "Excel consolidado gerado: %s (%d abas)",
-        consolidated_path, len(all_demos),
+        "Excel consolidado gerado: %s (%d arquivo(s))",
+        consolidated_path, len(sorted_results),
     )
