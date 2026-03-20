@@ -15,17 +15,15 @@ CORREÇÕES A FAZER:
    - natureza_anterior: D ou C do Saldo Anterior (indica se o saldo era devedor ou credor)
    - natureza_atual: D ou C do Saldo Atual (indica se o saldo é devedor ou credor)
    - Regra geral por grupo:
-     - Grupo 1 (Ativo): natureza D (Devedora)
-     - Grupo 2 (Passivo + PL): natureza C (Credora)
-     - Grupo 3 (Custos e Despesas): natureza D (Devedora)
-     - Grupo 4 (Receitas): natureza C (Credora)
+     - Grupo 1 (Ativo): natureza D (Devedora) → D = positivo, C = negativo
+     - Grupo 2+ (Passivo, PL, Resultado): natureza C (Credora) → C = positivo, D = negativo
    - MAS: se o saldo for negativo/invertido, a natureza INVERTE (ex: ativo com saldo credor = "C")
    - Retificadoras têm natureza INVERSA ao grupo pai.
 
 3. SINAIS:
    - Converta "D" e "C" dos valores para sinais numéricos:
-     - Se natureza do GRUPO é D: valor com "D" = positivo, valor com "C" = negativo
-     - Se natureza do GRUPO é C: valor com "C" = positivo, valor com "D" = negativo
+     - Ativo (grupo 1): valor com "D" = positivo, valor com "C" = negativo
+     - Passivo e Resultado (grupos 2+): valor com "C" = positivo, valor com "D" = negativo
    - Remova as letras D/C dos valores numéricos.
 
 4. HIERARQUIA:

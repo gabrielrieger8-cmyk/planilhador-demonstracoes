@@ -73,7 +73,12 @@ def _parse_br_number(text: str) -> tuple[float, Optional[str]]:
 
 
 def _apply_dc_sign(value: float, dc: Optional[str], natureza_grupo: str) -> float:
-    """Aplica sinal baseado em D/C e natureza do grupo contábil."""
+    """Aplica sinal baseado em D/C e natureza do grupo contábil.
+
+    Regra:
+    - Ativo (grupo 1): D = +, C = -
+    - Passivo e Resultado (grupos 2+): C = +, D = -
+    """
     if dc is None:
         return value
 
@@ -807,14 +812,12 @@ def formatar_balancete(texto: str, empresa: str = "", periodo: str = "") -> dict
         is_totalizador = tipo_raw == "A"
 
         # Natureza pelo grupo contábil (primeiro segmento da classificação)
+        # Ativo (1) = natureza D (D=+, C=-)
+        # Passivo (2) e Resultado (3, 4, 5…) = natureza C (C=+, D=-)
         primeiro_segmento = classificacao.split(".")[0].strip()
         grupo = primeiro_segmento.lstrip("0") or "0"
 
-        natureza = "D"
-        if grupo in ("2", "4"):
-            natureza = "C"
-        elif grupo in ("1", "3"):
-            natureza = "D"
+        natureza = "D" if grupo == "1" else "C"
 
         # Parse valores usando índices detectados
         saldo_ant_raw, dc_sa = _parse_br_number(row[i_sa]) if i_sa is not None and i_sa < len(row) else (0.0, None)
