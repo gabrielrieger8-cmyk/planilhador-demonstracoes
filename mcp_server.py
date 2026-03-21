@@ -373,8 +373,21 @@ if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
         import uvicorn
+
         port = int(os.environ.get("PORT", 8000))
-        app = mcp.streamable_http_app()
-        uvicorn.run(app, host="0.0.0.0", port=port, proxy_headers=True, forwarded_allow_ips="*")
+        starlette_app = mcp.streamable_http_app()
+
+        # Wrapper ASGI que aceita qualquer Host header (Railway proxy)
+        async def app(scope, receive, send):
+            if scope["type"] == "http":
+                headers = dict(scope.get("headers", []))
+                # Garante que o host header é aceito
+                scope["headers"] = [
+                    (k, v) if k != b"host" else (k, b"localhost")
+                    for k, v in scope.get("headers", [])
+                ]
+            await starlette_app(scope, receive, send)
+
+        uvicorn.run(app, host="0.0.0.0", port=port)
     else:
         mcp.run()
