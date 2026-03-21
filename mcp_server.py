@@ -25,7 +25,13 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 
-mcp = FastMCP("mirar-planilhador")
+_is_remote = os.environ.get("MCP_TRANSPORT", "stdio") != "stdio"
+_port = int(os.environ.get("PORT", 8000))
+mcp = FastMCP(
+    "mirar-planilhador",
+    host="0.0.0.0" if _is_remote else "127.0.0.1",
+    port=_port,
+)
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -372,22 +378,6 @@ def estimar_custo_processamento(
 if __name__ == "__main__":
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     if transport == "http":
-        import uvicorn
-
-        port = int(os.environ.get("PORT", 8000))
-        starlette_app = mcp.streamable_http_app()
-
-        # Wrapper ASGI que aceita qualquer Host header (Railway proxy)
-        async def app(scope, receive, send):
-            if scope["type"] == "http":
-                headers = dict(scope.get("headers", []))
-                # Garante que o host header é aceito
-                scope["headers"] = [
-                    (k, v) if k != b"host" else (k, b"localhost")
-                    for k, v in scope.get("headers", [])
-                ]
-            await starlette_app(scope, receive, send)
-
-        uvicorn.run(app, host="0.0.0.0", port=port)
+        mcp.run(transport="streamable-http")
     else:
         mcp.run()
