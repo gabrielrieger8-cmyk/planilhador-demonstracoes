@@ -16,6 +16,9 @@ import json
 import os
 import sys
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -37,6 +40,55 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 IS_REMOTE = os.environ.get("MCP_TRANSPORT", "stdio") != "stdio"
+
+
+# ---------------------------------------------------------------------------
+# Upload endpoint + Health (para Cowork via HTTP)
+# ---------------------------------------------------------------------------
+
+if _is_remote:
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+
+    @mcp.custom_route("/upload", methods=["POST"])
+    async def upload_pdf(request: Request) -> JSONResponse:
+        """Recebe PDFs via multipart upload e salva no servidor."""
+        form = await request.form()
+        results = []
+        for key in form:
+            upload = form[key]
+            if hasattr(upload, "read"):
+                content = await upload.read()
+                file_id = uuid.uuid4().hex[:12]
+                filename = upload.filename or f"doc_{file_id}.pdf"
+                dest = OUTPUT_DIR / f"{file_id}_{filename}"
+                dest.write_bytes(content)
+                results.append({
+                    "file_id": file_id,
+                    "server_path": str(dest.resolve()),
+                    "filename": filename,
+                    "size": len(content),
+                })
+        await form.close()
+        return JSONResponse({"files": results})
+
+    @mcp.custom_route("/health", methods=["GET"])
+    async def health(request: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
+
+    def _cleanup_old_uploads():
+        """Remove arquivos com mais de 1 hora no OUTPUT_DIR."""
+        while True:
+            time.sleep(300)
+            now = time.time()
+            for f in OUTPUT_DIR.iterdir():
+                if f.is_file() and (now - f.stat().st_mtime) > 3600:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+
+    threading.Thread(target=_cleanup_old_uploads, daemon=True).start()
 
 
 def _excel_response(caminho: Path, extra: dict) -> str:
@@ -291,6 +343,11 @@ def planilhar(pdf_paths: list[str] | None = None, pdfs_base64: list[dict] | None
         pdf_paths = [_resolve_pdf(pdf_base64=p["base64"], filename=p.get("filename", f"doc_{i}.pdf")) for i, p in enumerate(pdfs_base64)]
     if not pdf_paths:
         return json.dumps({"erro": "Forneça pdf_paths ou pdfs_base64."})
+
+    # Validar que arquivos existem (importante no modo remoto com upload)
+    for p in pdf_paths:
+        if not Path(p).is_file():
+            return json.dumps({"erro": f"Arquivo não encontrado no servidor: {p}. Use o endpoint /upload primeiro."})
 
     todas_demonstracoes = []
     todos_resultados = []
