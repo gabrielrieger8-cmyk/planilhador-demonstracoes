@@ -9,16 +9,11 @@ Expoe as funcoes standalone do pipeline como ferramentas MCP:
 
 from __future__ import annotations
 
-import base64
 import concurrent.futures
 import datetime
 import json
 import os
 import sys
-import tempfile
-import threading
-import time
-import uuid
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,119 +23,15 @@ from mcp.server.fastmcp import FastMCP
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
 
-_is_remote = os.environ.get("MCP_TRANSPORT", "stdio") != "stdio"
-_port = int(os.environ.get("PORT", 8000))
-mcp = FastMCP(
-    "mirar-planilhador",
-    host="0.0.0.0" if _is_remote else "127.0.0.1",
-    port=_port,
-)
+mcp = FastMCP("mirar-planilhador")
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-IS_REMOTE = os.environ.get("MCP_TRANSPORT", "stdio") != "stdio"
-
-
-# ---------------------------------------------------------------------------
-# Upload endpoint + Health (para Cowork via HTTP)
-# ---------------------------------------------------------------------------
-
-if _is_remote:
-    from starlette.requests import Request
-    from starlette.responses import JSONResponse
-
-    @mcp.custom_route("/upload", methods=["POST"])
-    async def upload_pdf(request: Request) -> JSONResponse:
-        """Recebe PDFs via multipart upload e salva no servidor."""
-        form = await request.form()
-        results = []
-        for key in form:
-            upload = form[key]
-            if hasattr(upload, "read"):
-                content = await upload.read()
-                file_id = uuid.uuid4().hex[:12]
-                filename = upload.filename or f"doc_{file_id}.pdf"
-                dest = OUTPUT_DIR / f"{file_id}_{filename}"
-                dest.write_bytes(content)
-                results.append({
-                    "file_id": file_id,
-                    "server_path": str(dest.resolve()),
-                    "filename": filename,
-                    "size": len(content),
-                })
-        await form.close()
-        return JSONResponse({"files": results})
-
-    @mcp.custom_route("/health", methods=["GET"])
-    async def health(request: Request) -> JSONResponse:
-        return JSONResponse({"status": "ok"})
-
-    def _cleanup_old_uploads():
-        """Remove arquivos com mais de 1 hora no OUTPUT_DIR."""
-        while True:
-            time.sleep(300)
-            now = time.time()
-            for f in OUTPUT_DIR.iterdir():
-                if f.is_file() and (now - f.stat().st_mtime) > 3600:
-                    try:
-                        f.unlink()
-                    except OSError:
-                        pass
-
-    threading.Thread(target=_cleanup_old_uploads, daemon=True).start()
-
-
-# ---------------------------------------------------------------------------
-# Tool 0 — Upload de arquivo (para Cowork que não pode fazer HTTP direto)
-# ---------------------------------------------------------------------------
-
-@mcp.tool()
-def upload_arquivo(filename: str, base64_content: str) -> str:
-    """Recebe um PDF em base64 e salva no servidor. Retorna o server_path para usar nas outras tools.
-
-    Use esta tool para enviar PDFs um a um antes de chamar planilhar.
-
-    Args:
-        filename: Nome do arquivo (ex: "Balancete_10.2025.pdf").
-        base64_content: Conteudo do PDF codificado em base64.
-
-    Returns:
-        JSON com server_path, filename e size.
-    """
-    file_id = uuid.uuid4().hex[:12]
-    dest = OUTPUT_DIR / f"{file_id}_{filename}"
-    content = base64.b64decode(base64_content)
-    dest.write_bytes(content)
-    return json.dumps({
-        "server_path": str(dest.resolve()),
-        "filename": filename,
-        "size": len(content),
-    }, ensure_ascii=False)
-
-
 def _excel_response(caminho: Path, extra: dict) -> str:
-    """Retorna JSON com o resultado. No modo remoto inclui o Excel em base64."""
+    """Retorna JSON com o caminho do Excel e metadados."""
     result = {"arquivo": str(caminho.resolve()), **extra}
-    if IS_REMOTE:
-        with open(caminho, "rb") as f:
-            result["excel_base64"] = base64.b64encode(f.read()).decode()
-        result["filename"] = caminho.name
     return json.dumps(result, ensure_ascii=False, indent=2, default=str)
-
-
-def _resolve_pdf(pdf_path: str | None = None, pdf_base64: str | None = None, filename: str = "documento.pdf") -> str:
-    """Resolve um PDF de path local ou base64 para um path no disco."""
-    if pdf_path and os.path.isfile(pdf_path):
-        return pdf_path
-    if pdf_base64:
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", prefix=filename.replace(".pdf", "_"), delete=False, dir=OUTPUT_DIR)
-        tmp.write(base64.b64decode(pdf_base64))
-        tmp.close()
-        return tmp.name
-    if pdf_path:
-        return pdf_path  # Tenta usar o path mesmo assim
-    raise ValueError("Forneça pdf_path ou pdf_base64.")
 
 
 # ---------------------------------------------------------------------------
@@ -148,21 +39,19 @@ def _resolve_pdf(pdf_path: str | None = None, pdf_base64: str | None = None, fil
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def classificar_documento(pdf_path: str = "", pdf_base64: str = "", modelo: str = "gemini-2.5-flash") -> str:
+def classificar_documento(pdf_path: str, modelo: str = "gemini-2.5-flash") -> str:
     """Classifica um PDF contabil e identifica as demonstracoes presentes.
 
     Args:
-        pdf_path: Caminho absoluto para o arquivo PDF (uso local).
-        pdf_base64: Conteudo do PDF em base64 (uso remoto).
-        modelo: Modelo de IA a usar (ex: gemini-2.5-flash, gemini-2.0-flash).
+        pdf_path: Caminho absoluto para o arquivo PDF.
+        modelo: Modelo de IA a usar (ex: gemini-2.5-flash).
 
     Returns:
         JSON com empresa, demonstracoes encontradas e custo estimado.
     """
     from app.services.classifier import classificar
 
-    resolved = _resolve_pdf(pdf_path or None, pdf_base64 or None)
-    resultado = classificar(resolved, model=modelo)
+    resultado = classificar(pdf_path, model=modelo)
     return json.dumps(resultado, ensure_ascii=False, indent=2)
 
 
@@ -214,8 +103,7 @@ def _extrair_e_formatar(pdf_path: str, tipo: str, paginas=None, modelo="gemini-2
 @mcp.tool()
 def extrair_demonstracao(
     tipo: str,
-    pdf_path: str = "",
-    pdf_base64: str = "",
+    pdf_path: str,
     paginas: list[int] | None = None,
     modelo: str = "gemini-2.5-flash",
 ) -> str:
@@ -226,15 +114,14 @@ def extrair_demonstracao(
 
     Args:
         tipo: Tipo da demonstracao — "balancete", "dre" ou "balanco_patrimonial".
-        pdf_path: Caminho absoluto para o arquivo PDF (uso local).
-        pdf_base64: Conteudo do PDF em base64 (uso remoto).
+        pdf_path: Caminho absoluto para o arquivo PDF.
         paginas: Lista de paginas (1-indexed) a processar. None = todas.
         modelo: Modelo de IA a usar na extracao.
 
     Returns:
         JSON com caminho do arquivo de dados, resumo da validacao e custo.
     """
-    resolved = _resolve_pdf(pdf_path or None, pdf_base64 or None)
+    resolved = pdf_path
     dados_list, validacoes, custo, pages = _extrair_e_formatar(resolved, tipo, paginas, modelo)
 
     # Salva dados completos em arquivo JSON
@@ -351,14 +238,13 @@ def _processar_pdf(pdf_path: str, modelo: str):
 
 
 @mcp.tool()
-def planilhar(pdf_paths: list[str] | None = None, pdfs_base64: list[dict] | None = None, modelo: str = "gemini-2.5-flash") -> str:
+def planilhar(pdf_paths: list[str], modelo: str = "gemini-2.5-flash") -> str:
     """Pipeline completo: classifica, extrai e exporta demonstracoes de um ou mais PDFs para Excel.
 
     Processa PDFs em paralelo (1 key por PDF via round-robin) sem devolver dados grandes ao Claude.
 
     Args:
-        pdf_paths: Lista de caminhos absolutos dos PDFs (uso local).
-        pdfs_base64: Lista de dicts {filename, base64} com os PDFs (uso remoto).
+        pdf_paths: Lista de caminhos absolutos dos PDFs.
         modelo: Modelo de IA a usar (default: gemini-2.5-flash).
 
     Returns:
@@ -366,23 +252,15 @@ def planilhar(pdf_paths: list[str] | None = None, pdfs_base64: list[dict] | None
     """
     from app.services.exporter import export_excel_multi
 
-    # Resolve PDFs (paths locais ou base64)
-    if pdfs_base64:
-        pdf_paths = [_resolve_pdf(pdf_base64=p["base64"], filename=p.get("filename", f"doc_{i}.pdf")) for i, p in enumerate(pdfs_base64)]
-    if not pdf_paths:
-        return json.dumps({"erro": "Forneça pdf_paths ou pdfs_base64."})
-
-    # Validar que arquivos existem (importante no modo remoto com upload)
     for p in pdf_paths:
         if not Path(p).is_file():
-            return json.dumps({"erro": f"Arquivo não encontrado no servidor: {p}. Use o endpoint /upload primeiro."})
+            return json.dumps({"erro": f"Arquivo não encontrado: {p}"})
 
     todas_demonstracoes = []
     todos_resultados = []
     empresa = None
     custo_total = 0.0
 
-    # Processa PDFs em paralelo — cada thread pega keys do pool round-robin
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(pdf_paths)) as executor:
         futures = {
             executor.submit(_processar_pdf, pdf_path, modelo): pdf_path
@@ -396,19 +274,13 @@ def planilhar(pdf_paths: list[str] | None = None, pdfs_base64: list[dict] | None
             todos_resultados.extend(resultados)
             custo_total += custo
 
-    # Ordena por periodo para manter ordem cronologica no Excel
     todas_demonstracoes.sort(key=lambda d: d.get("periodo", ""))
     todos_resultados.sort(key=lambda r: r.get("periodo", ""))
 
-    # Exportar Excel: mesma pasta dos PDFs (local) ou OUTPUT_DIR (remoto)
     pdf_dir = Path(pdf_paths[0]).parent
-    if pdfs_base64 or str(pdf_dir).startswith(str(OUTPUT_DIR)):
-        output_dir = OUTPUT_DIR
-    else:
-        output_dir = pdf_dir
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     nome_arquivo = f"{empresa.replace(' ', '_')}_{timestamp}.xlsx"
-    output_path = output_dir / nome_arquivo
+    output_path = pdf_dir / nome_arquivo
 
     caminho = export_excel_multi(
         demonstracoes=todas_demonstracoes,
@@ -461,8 +333,4 @@ def estimar_custo_processamento(
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    if transport == "http":
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+    mcp.run()

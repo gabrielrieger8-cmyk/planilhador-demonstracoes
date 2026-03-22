@@ -1,9 +1,0 @@
-__pycache__
-*.pyc
-.env
-.git
-output/
-tests/
-static/
-*.md
-SESSION_LOG.md
