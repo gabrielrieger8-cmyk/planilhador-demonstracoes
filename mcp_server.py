@@ -91,6 +91,34 @@ if _is_remote:
     threading.Thread(target=_cleanup_old_uploads, daemon=True).start()
 
 
+# ---------------------------------------------------------------------------
+# Tool 0 — Upload de arquivo (para Cowork que não pode fazer HTTP direto)
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def upload_arquivo(filename: str, base64_content: str) -> str:
+    """Recebe um PDF em base64 e salva no servidor. Retorna o server_path para usar nas outras tools.
+
+    Use esta tool para enviar PDFs um a um antes de chamar planilhar.
+
+    Args:
+        filename: Nome do arquivo (ex: "Balancete_10.2025.pdf").
+        base64_content: Conteudo do PDF codificado em base64.
+
+    Returns:
+        JSON com server_path, filename e size.
+    """
+    file_id = uuid.uuid4().hex[:12]
+    dest = OUTPUT_DIR / f"{file_id}_{filename}"
+    content = base64.b64decode(base64_content)
+    dest.write_bytes(content)
+    return json.dumps({
+        "server_path": str(dest.resolve()),
+        "filename": filename,
+        "size": len(content),
+    }, ensure_ascii=False)
+
+
 def _excel_response(caminho: Path, extra: dict) -> str:
     """Retorna JSON com o resultado. No modo remoto inclui o Excel em base64."""
     result = {"arquivo": str(caminho.resolve()), **extra}
