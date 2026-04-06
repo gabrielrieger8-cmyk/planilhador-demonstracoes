@@ -145,6 +145,19 @@ def _periodo_to_short(periodo: str) -> str:
     return periodo
 
 
+def _periodo_to_mm_yyyy(periodo: str) -> str:
+    """Converte período como '01.12.2025 A 31.12.2025' em '12-2025'."""
+    if not periodo:
+        return ""
+    matches = re.findall(r'(\d{1,2})[./](\d{4})', periodo)
+    if matches:
+        mes_str, ano = matches[-1]
+        mes = int(mes_str)
+        if 1 <= mes <= 12:
+            return f"{mes:02d}-{ano}"
+    return ""
+
+
 def _short_tab_name(tipo: str, periodo: str) -> str:
     """Nome curto para aba: 'Balancete dez/25'."""
     label = TIPO_LABELS.get(tipo, tipo)
@@ -216,7 +229,9 @@ def export_excel_multi(
         if len(demos) > 1 and tipo in ("dre", "balanco_patrimonial") and _same_plano_de_contas(demos, tipo):
             label = TIPO_LABELS.get(tipo, tipo)
             if periodo_override:
-                raw_name = f"{label} {periodo_override}"
+                last_periodo = demos[-1].get("periodo", "")
+                mm_yyyy = _periodo_to_mm_yyyy(last_periodo)
+                raw_name = f"{empresa}_{mm_yyyy}" if mm_yyyy else f"{label} {periodo_override}"
             else:
                 last_periodo = demos[-1].get("periodo", "")
                 short = _periodo_to_short(last_periodo)
@@ -239,8 +254,11 @@ def export_excel_multi(
                 periodo = periodo_override or demo.get("periodo", "")
                 dados = demo.get("dados", {})
 
-                if periodo_override or len(demos) > 1 or len(groups) > 1:
-                    raw_name = f"{TIPO_LABELS.get(tipo, tipo)} {periodo}".strip() if periodo_override else _short_tab_name(tipo, demo.get("periodo", ""))
+                if periodo_override:
+                    mm_yyyy = _periodo_to_mm_yyyy(demo.get("periodo", ""))
+                    raw_name = f"{empresa}_{mm_yyyy}" if mm_yyyy else f"{empresa}_{periodo_override}"
+                elif len(demos) > 1 or len(groups) > 1:
+                    raw_name = _short_tab_name(tipo, demo.get("periodo", ""))
                 else:
                     raw_name = _build_title(empresa, tipo, periodo)
                 tab_name = _unique_tab_name(raw_name, used_names)
