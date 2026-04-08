@@ -111,38 +111,6 @@
                 </button>
             </div>
         </div>
-
-        <!-- Feedback -->
-        <div id="feedback-section" class="hidden">
-            <h2>Avaliacao da Qualidade</h2>
-            <p class="subtitle">Como ficou o resultado gerado?</p>
-            <div class="feedback-stars">
-                <button class="star-btn" onclick="setRating(1)" data-rating="1">
-                    <span class="star-num">1</span>
-                    <span class="star-label">Inutilizavel</span>
-                </button>
-                <button class="star-btn" onclick="setRating(2)" data-rating="2">
-                    <span class="star-num">2</span>
-                    <span class="star-label">Ruim</span>
-                </button>
-                <button class="star-btn" onclick="setRating(3)" data-rating="3">
-                    <span class="star-num">3</span>
-                    <span class="star-label">Regular</span>
-                </button>
-                <button class="star-btn" onclick="setRating(4)" data-rating="4">
-                    <span class="star-num">4</span>
-                    <span class="star-label">Bom</span>
-                </button>
-                <button class="star-btn" onclick="setRating(5)" data-rating="5">
-                    <span class="star-num">5</span>
-                    <span class="star-label">Excelente</span>
-                </button>
-            </div>
-            <p id="rating-desc" class="rating-description"></p>
-            <textarea id="feedback-text" placeholder="O que faltou ou estava errado? (opcional)" rows="3"></textarea>
-            <button id="feedback-submit" class="btn-primary" onclick="submitFeedback()" disabled>Enviar Avaliacao</button>
-            <p id="feedback-thanks" class="hidden" style="color: #16a34a; margin-top: 0.5rem;">Obrigado pela avaliacao!</p>
-        </div>
     </div>
 
     <script src="/static/app.js?v=HASH"></script>

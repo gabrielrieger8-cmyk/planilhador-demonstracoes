@@ -456,7 +456,6 @@ async function onProcessingDone() {
         const data = await resp.json();
         renderResults(data);
         resultsSection.classList.remove('hidden');
-        document.getElementById('feedback-section').classList.remove('hidden');
     } catch (err) {
         console.error('Erro ao buscar resultados:', err);
     }
@@ -615,45 +614,3 @@ function formatTime(seconds) {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
 }
 
-// ---------------------------------------------------------------------------
-// Feedback
-// ---------------------------------------------------------------------------
-
-const RATING_DESCS = {
-    1: 'Inutilizavel: Output completamente errado, dados incorretos, formato ilegivel. Precisa refazer do zero.',
-    2: 'Ruim: Muitos erros significativos (valores trocados, contas faltando). Retrabalho extenso.',
-    3: 'Regular: Estrutura correta mas com erros pontuais. Correcao manual necessaria.',
-    4: 'Bom: Poucos erros menores (arredondamento, acentuacao). Utilizavel com pequenos ajustes.',
-    5: 'Excelente: Resultado perfeito ou quase perfeito. Pronto para uso direto.',
-};
-
-let selectedRating = 0;
-
-function setRating(n) {
-    selectedRating = n;
-    document.querySelectorAll('.star-btn').forEach(btn => {
-        btn.classList.toggle('active', parseInt(btn.dataset.rating) <= n);
-    });
-    document.getElementById('rating-desc').textContent = RATING_DESCS[n] || '';
-    document.getElementById('feedback-submit').disabled = false;
-}
-
-async function submitFeedback() {
-    if (!selectedRating) return;
-    const text = document.getElementById('feedback-text').value.trim();
-    try {
-        await fetch('/feedback', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                rating: selectedRating,
-                missing_info: text || null,
-                context: { job_id: jobId, files: uploadedFiles.map(f => f.name) },
-            }),
-        });
-        document.getElementById('feedback-submit').disabled = true;
-        document.getElementById('feedback-thanks').classList.remove('hidden');
-    } catch (err) {
-        alert('Erro ao enviar avaliacao: ' + err.message);
-    }
-}

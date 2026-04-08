@@ -170,16 +170,6 @@ async def get_models():
     }
 
 
-@app.post("/feedback")
-async def feedback(body: dict):
-    """Proxy feedback to Portal internal API."""
-    _post_to_portal("feedback", {
-        "app": APP_NAME,
-        "rating": body.get("rating"),
-        "comment": body.get("missing_info"),
-    })
-    return {"ok": True}
-
 
 # Registra rotas
 from app.routes.upload import router as upload_router  # noqa: E402
